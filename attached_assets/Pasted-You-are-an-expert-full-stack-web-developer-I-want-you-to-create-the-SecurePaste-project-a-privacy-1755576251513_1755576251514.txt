@@ -1,0 +1,38 @@
+You are an expert full-stack web developer. I want you to create the SecurePaste project — a privacy-focused Pastebin with malware & sensitive data detection — based on the attached specification. Please follow these strict requirements:
+
+1. General Requirements
+	•	Build a minimal but fully functional web application (not a prototype).
+	•	Do not use any mock data, dummy placeholders, or fake IP addresses.
+	•	If external APIs (like VirusTotal) cannot be used, implement an alternative fallback using regex or YARA rules for scanning instead of faking results.
+
+2. Core Features
+	•	Paste Creation: Users can create text/code pastes, store them in DB, and share via a link.
+	•	Expiry & Self-Destruct: Implement logic for timed expiry and one-time self-destruct pastes.
+	•	Malware & Sensitive Data Detection:
+	•	Integrate with VirusTotal API if available.
+	•	If not available, use regex/YARA/TruffleHog-style scanning.
+	•	Access Logging: Every paste view should log IP (use request.remote_addr or trusted proxy headers), user-agent, and timestamp.
+
+3. Database Schema (Must Be Implemented)
+
+Design and implement the schema with at least these tables/collections:
+	•	Users
+	•	id, email, password_hash, created_at
+	•	Pastes
+	•	id, content, owner_id (nullable for guest pastes), expiry, self_destruct flag, encrypted flag, created_at
+	•	AccessLogs
+	•	id, paste_id, viewer_ip, user_agent, accessed_at
+
+The schema must fully support all features (expiry, encryption, logging, user login).
+
+4. Security Features
+	•	Encryption/Decryption: Optionally encrypt pastes with AES, decrypted when accessed with a password.
+	•	User Authentication: Implement basic user login and registration with hashed passwords (bcrypt or argon2).
+	•	Forgot Password & Reset Links:
+	•	Implement forgot password flow using email OTP or secure reset tokens.
+	•	Reset links should be sharable — anyone with the link can open it, but if a password is set, they must provide it for access.
+
+5. Tech Stack
+	•	Frontend: HTML + TailwindCSS + JavaScript (React optional).
+	•	Backend: Python (Flask/FastAPI) or Node.js.
+	•	Database: SQLite or MongoDB.
