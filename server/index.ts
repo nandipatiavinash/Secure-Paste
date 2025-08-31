@@ -44,7 +44,8 @@ app.use((req, res, next) => {
 app.use(
   cors({
     origin: [
-      "http://localhost:5173",                // local dev
+      "http://localhost:5173",
+      "secure-paste-six.vercel.app", // local dev
       "https://secure-paste-git-main-nandipatiavinash19-1566s-projects.vercel.app",      // your Vercel frontend domain
     ],
     credentials: true, // allow cookies/sessions
