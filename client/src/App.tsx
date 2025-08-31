@@ -14,6 +14,8 @@ import AccessLogsPage from "@/pages/access-logs";
 import Dashboard from "@/pages/dashboard";
 import SettingsPage from "@/pages/settings-page";
 import SharePage from "@/pages/share-page";
+import ForgotPasswordPage from "./pages/forgot-password";
+import ResetPasswordPage from "./pages/reset-password";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -26,6 +28,8 @@ function Router() {
       <Route path="/paste/:id/logs" component={AccessLogsPage} />
       <Route path="/paste/:id" component={PasteView} />
       <Route path="/share/:token" component={SharePage} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <ProtectedRoute path="/dashboard" component={Dashboard} />
       <ProtectedRoute path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
