@@ -1,52 +1,63 @@
-import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+const schema = z.object({
+  email: z.string().email("Enter a valid email"),
+});
+
+type FormData = z.infer<typeof schema>;
 
 export default function ForgotPasswordPage() {
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
-  const [resetToken, setResetToken] = useState("");
+  const form = useForm<FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: { email: "" },
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/forgot-password`, {
+  const onSubmit = async (data: FormData) => {
+    const res = await fetch(
+      `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/forgot-password`,
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-
-      setMessage(data.message || "Check your email for reset instructions.");
-      if (data.resetToken) {
-        // For development: show token in UI
-        setResetToken(data.resetToken);
+        body: JSON.stringify(data),
+        credentials: "include",
       }
-    } catch {
-      setMessage("Something went wrong. Try again.");
+    );
+    const result = await res.json();
+    alert(result.message || "Check your email for reset instructions!");
+    if (result.resetToken) {
+      console.log("Dev reset token:", result.resetToken);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto p-6">
-      <h1 className="text-xl font-bold mb-4">Forgot Password</h1>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <input
-          type="email"
-          placeholder="Your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="w-full p-2 border rounded"
-        />
-        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded">
-          Send Reset Link
-        </button>
-      </form>
-      {message && <p className="mt-4 text-sm text-gray-700">{message}</p>}
-      {resetToken && (
-        <p className="mt-4 text-xs text-red-500">
-          Dev Token: <code>{resetToken}</code>
-        </p>
-      )}
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Forgot Password</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div>
+              <Label>Email</Label>
+              <Input type="email" {...form.register("email")} placeholder="your@email.com" />
+              {form.formState.errors.email && (
+                <p className="text-sm text-red-500">
+                  {form.formState.errors.email.message}
+                </p>
+              )}
+            </div>
+            <Button type="submit" className="w-full">
+              Send Reset Link
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
