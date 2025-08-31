@@ -7,9 +7,8 @@
     "dev": "NODE_ENV=development tsx server/index.ts",
     "start": "NODE_ENV=production node dist/index.js",
 
-    "dev:frontend": "vite --config client/vite.config.ts",
-    "build:frontend": "vite build --config client/vite.config.ts --outDir ../dist/public",
-
+    "dev:frontend": "vite",
+    "build:frontend": "vite build --config vite.config.ts --outDir dist/public",
     "build:backend": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
 
     "build": "npm run build:frontend && npm run build:backend",
