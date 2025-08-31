@@ -5,12 +5,45 @@ import dotenv from "dotenv";
 import cors from "cors";
 
 dotenv.config();
+
 const app = express();
+
+// ✅ CORS comes FIRST
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        "http://localhost:5173",              // local dev
+        "https://secure-paste.vercel.app",    // future custom domain
+      ];
+
+      // ✅ allow ALL Vercel preview URLs (*.vercel.app)
+      const vercelPattern = /\.vercel\.app$/;
+
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        vercelPattern.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // allow cookies/sessions
+  })
+);
+
+// ✅ Body parsers AFTER CORS
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// ✅ Health check
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
-app.use(express.urlencoded({ extended: false }));
+
+// ✅ Logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -41,27 +74,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      const allowedOrigins = [
-        "http://localhost:5173",               // local dev
-        "https://secure-paste.vercel.app",     // add your future custom domain if any
-      ];
-
-      // ✅ allow ALL Vercel preview URLs (*.vercel.app)
-      const vercelPattern = /\.vercel\.app$/;
-
-      if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // allow cookies/sessions
-  })
-);
-
+// ✅ Register routes & error handling
 (async () => {
   const server = await registerRoutes(app);
 
