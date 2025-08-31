@@ -2,48 +2,19 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import dotenv from "dotenv";
-import cors from "cors";
 
 dotenv.config();
-
 const app = express();
 
-// ✅ CORS comes FIRST
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      const allowedOrigins = [
-        "http://localhost:5173",              // local dev
-        "https://secure-paste.vercel.app",    // future custom domain
-      ];
-
-      // ✅ allow ALL Vercel preview URLs (*.vercel.app)
-      const vercelPattern = /\.vercel\.app$/;
-
-      if (
-        !origin ||
-        allowedOrigins.includes(origin) ||
-        vercelPattern.test(origin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // allow cookies/sessions
-  })
-);
-
-// ✅ Body parsers AFTER CORS
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// ✅ Health check
+// Health check endpoint
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// ✅ Logging middleware
+// Logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -62,11 +33,9 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
       }
-
       log(logLine);
     }
   });
@@ -74,27 +43,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ Register routes & error handling
 (async () => {
   const server = await registerRoutes(app);
 
+  // Error handler
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     res.status(status).json({ message });
     throw err;
   });
 
-  // Only setup Vite in dev
+  // Setup Vite in dev, static in production
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // IMPORTANT: registerRoutes already starts the server.
-  // Just log the info here, no need to call listen() again.
   const PORT = parseInt(process.env.PORT || "3001", 10);
 
   server.listen(PORT, () => {
