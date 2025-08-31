@@ -2,6 +2,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import dotenv from "dotenv";
+import cors from "cors";
+
 dotenv.config();
 const app = express();
 app.use(express.json());
@@ -38,6 +40,16 @@ app.use((req, res, next) => {
 
   next();
 });
+
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",                // local dev
+      "https://secure-paste-git-main-nandipatiavinash19-1566s-projects.vercel.app",      // your Vercel frontend domain
+    ],
+    credentials: true, // allow cookies/sessions
+  })
+);
 
 (async () => {
   const server = await registerRoutes(app);
