@@ -2,9 +2,34 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import dotenv from "dotenv";
+import cors from "cors";
 
 dotenv.config();
 const app = express();
+
+// ✅ CORS must be before routes/middleware
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        "http://localhost:5173",              // local dev
+        "https://secure-paste.vercel.app",    // your production frontend
+      ];
+      const vercelPattern = /\.vercel\.app$/; // allow all preview deployments
+
+      if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("CORS blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // allow cookies/sessions
+  })
+);
+
+// ✅ also handle preflight OPTIONS
+app.options("*", cors());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
