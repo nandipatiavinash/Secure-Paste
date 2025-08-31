@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Lock, Shield, Eye, Calendar, FileText, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { API_URL } from "@/lib/utils";
 
 export default function SharePage() {
   const { token } = useParams() as { token: string };
@@ -20,9 +21,12 @@ export default function SharePage() {
   const { data: paste, isLoading, error, refetch } = useQuery({
     queryKey: ["/api/share", token],
     queryFn: async () => {
-      const res = await fetch(`/api/share/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`, {
-        credentials: 'include',
-      });
+      const res = await fetch(
+        `${API_URL}/api/share/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`,
+        {
+          credentials: 'include',
+        }
+      );
       
       if (res.status === 401) {
         throw new Error("PASSWORD_REQUIRED");
