@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Lock, Eye } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { API_URL } from "@/lib/utils";
 
 interface PasteData {
   id: string;
@@ -41,7 +42,7 @@ export default function PasteView() {
         ? `/api/pastes/${pasteId}?password=${encodeURIComponent(password)}`
         : `/api/pastes/${pasteId}`;
 
-      const res = await fetch(url, {
+      const res = await fetch(`${API_URL}${url}`, {
         credentials: "include",
         headers: { Accept: "application/json" }, // ask for JSON explicitly
       });
