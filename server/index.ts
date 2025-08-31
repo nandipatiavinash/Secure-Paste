@@ -54,15 +54,15 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Setup Vite in dev, static in production
   if (app.get("env") === "development") {
+    // Local dev: use Vite
     await setupVite(app, server);
-  } else {
+  } else if (process.env.SERVE_STATIC === "true") {
+    // Only serve static files if explicitly enabled
     serveStatic(app);
   }
 
   const PORT = parseInt(process.env.PORT || "3001", 10);
-
   server.listen(PORT, () => {
     log(`✅ Server running at http://localhost:${PORT}`);
   });
