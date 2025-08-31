@@ -40,15 +40,17 @@ const loginSchema = z.object({
 });
 
 export function setupAuth(app: Express) {
+  // configure session middleware
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production", // ✅ required for HTTPS
       httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: "none",                              // ✅ allow cross-site cookies
+      maxAge: 24 * 60 * 60 * 1000,                   // 24 hours
     },
   };
 
