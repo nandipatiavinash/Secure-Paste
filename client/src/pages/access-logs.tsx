@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Link } from "wouter";
+import { API_URL } from "@/lib/utils";
 
 interface AccessLog {
   id: string;
@@ -26,7 +27,7 @@ export default function AccessLogsPage() {
   const { data: logs, isLoading, error } = useQuery<AccessLog[]>({
     queryKey: ["/api/pastes", pasteId, "logs"],
     queryFn: async () => {
-      const res = await fetch(`/api/pastes/${pasteId}/logs`, {
+      const res = await fetch(`${API_URL}/api/pastes/${pasteId}/logs`, {
         credentials: 'include'
       });
       if (!res.ok) {
