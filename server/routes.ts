@@ -6,6 +6,9 @@ import { malwareScanner } from "./services/malware-scanner";
 import { encryptionService } from "./services/encryption";
 import { VirusTotalService } from "./services/virustotal";
 import crypto from "crypto";
+import cors from "cors"; 
+
+
 import {
   insertPasteSchema,
 } from "@shared/schema";
@@ -47,6 +50,26 @@ function getClientIP(req: any): string {
 
 export function registerRoutes(app: Express): Server {
   setupAuth(app);
+
+  app.use(
+    "/api",
+    cors({
+      origin: (origin, callback) => {
+        const allowedOrigins = [
+          "http://localhost:5173",
+          "https://secure-paste.vercel.app",
+        ];
+        const vercelPattern = /\.vercel\.app$/; // allow all preview URLs
+
+        if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
+      credentials: true,
+    })
+  );
 
  /* --------------------------- Create paste --------------------------- */
 app.post("/api/pastes", async (req, res) => {
