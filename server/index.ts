@@ -45,11 +45,11 @@ app.use(
   cors({
     origin: (origin, callback) => {
       const allowedOrigins = [
-        "http://localhost:5173",                // dev
-        "https://secure-paste-six.vercel.app",      // custom if you add later
+        "http://localhost:5173",               // local dev
+        "https://secure-paste.vercel.app",     // add your future custom domain if any
       ];
 
-      // ✅ allow all *.vercel.app preview URLs
+      // ✅ allow ALL Vercel preview URLs (*.vercel.app)
       const vercelPattern = /\.vercel\.app$/;
 
       if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
@@ -58,7 +58,7 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    credentials: true,
+    credentials: true, // allow cookies/sessions
   })
 );
 
