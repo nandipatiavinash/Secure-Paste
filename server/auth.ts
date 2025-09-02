@@ -7,7 +7,7 @@ import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { z } from "zod";
-import { Resend } from "resend";
+import { createClient } from "@supabase/supabase-js";
 
 declare global {
   namespace Express {
@@ -17,8 +17,11 @@ declare global {
 
 const scryptAsync = promisify(scrypt);
 
-// ✅ Initialize Resend with API key
-const resend = new Resend(process.env.RESEND_API_KEY!);
+// ✅ Supabase Admin Client (backend only!)
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // ⚠️ never expose to frontend
+);
 
 async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -51,10 +54,10 @@ export function setupAuth(app: Express) {
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // only send over HTTPS
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      sameSite: "none", // allow cross-site cookies
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: "none",
+      maxAge: 24 * 60 * 60 * 1000,
     },
   };
 
@@ -151,107 +154,31 @@ export function setupAuth(app: Express) {
     res.json(userWithoutPassword);
   });
 
-  // ✅ Forgot Password (send real email via Resend)
+  // ✅ Forgot Password via Supabase
   app.post("/api/forgot-password", async (req, res) => {
     try {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
 
-      const user = await storage.getUserByEmail(email);
-      if (!user) {
-        // Do not reveal if email exists
-        return res.json({ message: "If the email exists, a reset link will be sent" });
+      // Supabase handles sending reset email itself
+      const { error } = await supabaseAdmin.auth.admin.generateLink({
+        type: "recovery",
+        email,
+        options: {
+          redirectTo: "https://secure-paste.vercel.app/reset-password",
+        },
+      });
+
+      if (error) {
+        console.error("❌ Supabase reset error:", error.message);
+        return res.status(500).json({ message: "Failed to send reset email" });
       }
 
-      const token = randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
-
-      await storage.createPasswordReset({ userId: user.id, token, expiresAt });
-
-      const resetUrl = `https://secure-paste.vercel.app/reset-password?token=${token}`;
-
-      try {
-        const response = await resend.emails.send({
-          from: "onboarding@resend.dev", // ✅ works out of the box
-          to: user.email,
-          subject: "Password Reset - SecurePaste",
-          html: `
-            <p>Hello,</p>
-            <p>You requested a password reset. Click the link below to reset:</p>
-            <p><a href="${resetUrl}">${resetUrl}</a></p>
-            <p>This link will expire in 1 hour.</p>
-          `,
-        });
-
-        console.log("📧 Resend response:", response); // ✅ check Render logs
-        res.json({ message: "If the email exists, a reset link will be sent" });
-      } catch (sendError: any) {
-        console.error("❌ Resend email error:", sendError);
-        res.status(500).json({ message: "Failed to send reset email" });
-      }
+      res.json({ message: "If the email exists, a reset link will be sent" });
     } catch (error) {
       console.error("Forgot password error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // // ✅ Forgot Password (send real email via Resend)
-  // app.post("/api/forgot-password", async (req, res) => {
-  //   try {
-  //     const { email } = z.object({ email: z.string().email() }).parse(req.body);
-
-  //     const user = await storage.getUserByEmail(email);
-  //     if (!user) {
-  //       // Do not reveal if email exists
-  //       return res.json({ message: "If the email exists, a reset link will be sent" });
-  //     }
-
-  //     const token = randomBytes(32).toString("hex");
-  //     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
-
-  //     await storage.createPasswordReset({ userId: user.id, token, expiresAt });
-
-  //     const resetUrl = `https://secure-paste.vercel.app/reset-password?token=${token}`;
-
-  //     await resend.emails.send({
-  //       from: "onboarding@resend.dev", // ✅ works for dev, replace with your verified domain in production
-  //       to: user.email,
-  //       subject: "Password Reset - SecurePaste",
-  //       html: `
-  //         <p>Hello,</p>
-  //         <p>You requested a password reset. Click the link below to reset:</p>
-  //         <p><a href="${resetUrl}">${resetUrl}</a></p>
-  //         <p>This link will expire in 1 hour.</p>
-  //       `,
-  //     });
-
-  //     res.json({ message: "If the email exists, a reset link will be sent" });
-  //   } catch (error) {
-  //     console.error("Forgot password error:", error);
-  //     res.status(500).json({ message: "Internal server error" });
-  //   }
-  // });
-
-  // Reset Password
-  app.post("/api/reset-password", async (req, res) => {
-    try {
-      const { token, password } = z.object({
-        token: z.string(),
-        password: z.string().min(8),
-      }).parse(req.body);
-
-      const reset = await storage.getPasswordReset(token);
-      if (!reset) return res.status(400).json({ message: "Invalid or expired reset token" });
-
-      const hashedPassword = await hashPassword(password);
-      await storage.updateUser(reset.userId, { password: hashedPassword });
-      await storage.markPasswordResetUsed(reset.id);
-
-      res.json({ message: "Password reset successful" });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input" });
-      }
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
+  // ✅ Reset Password will now be handled by Supabase Auth redirect
 }
