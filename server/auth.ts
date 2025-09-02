@@ -23,6 +23,11 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY! // ⚠️ never expose to frontend
 );
 
+// ✅ Enforce SESSION_SECRET is set
+if (!process.env.SESSION_SECRET) {
+  throw new Error("❌ SESSION_SECRET is not set in environment variables!");
+}
+
 async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
   const buf = (await scryptAsync(password, salt, 64)) as Buffer;
@@ -47,17 +52,17 @@ const loginSchema = z.object({
 });
 
 export function setupAuth(app: Express) {
-  // Session settings
+  // ✅ Safe session settings
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
+    secret: process.env.SESSION_SECRET!, // guaranteed to exist
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production", // HTTPS only
       httpOnly: true,
-      sameSite: "none",
-      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: "none", // allow cross-site cookies
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   };
 
@@ -180,5 +185,5 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // ✅ Reset Password will now be handled by Supabase Auth redirect
+  // ✅ Reset Password handled by Supabase redirect flow
 }
