@@ -28,8 +28,10 @@ function Router() {
       <Route path="/paste/:id/logs" component={AccessLogsPage} />
       <Route path="/paste/:id" component={PasteView} />
       <Route path="/share/:token" component={SharePage} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/forgot-password" component={ForgotPasswordPage} />
+      <Route path="/reset-password/:token" component={ResetPasswordPage} />
+      {/* <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} /> */}
       <ProtectedRoute path="/dashboard" component={Dashboard} />
       <ProtectedRoute path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
