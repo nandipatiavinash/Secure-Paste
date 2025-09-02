@@ -2,11 +2,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react"; // ✅ spinner icon
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -29,32 +29,18 @@ export default function ForgotPasswordPage() {
     setServerMessage(null);
     setError(null);
 
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/forgot-password`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-          credentials: "include",
-        }
-      );
+    const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
+      redirectTo: "https://secure-paste.vercel.app/reset-password",
+    });
 
-      const result = await res.json();
-      if (res.ok) {
-        setServerMessage(result.message || "✅ Check your email for reset instructions.");
-        if (result.resetToken) {
-          console.log("Dev reset token:", result.resetToken);
-        }
-        form.reset();
-      } else {
-        setError(result.message || "Something went wrong. Try again.");
-      }
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setLoading(false);
+    if (error) {
+      setError(error.message);
+    } else {
+      setServerMessage("✅ Check your email for a reset link.");
+      form.reset();
     }
+
+    setLoading(false);
   };
 
   return (
@@ -85,22 +71,10 @@ export default function ForgotPasswordPage() {
             {serverMessage && (
               <p className="text-sm text-green-600">{serverMessage}</p>
             )}
-            {error && (
-              <p className="text-sm text-red-600">{error}</p>
-            )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
 
-            <Button
-              type="submit"
-              className="w-full flex items-center justify-center gap-2 transition-all duration-150 ease-in-out active:scale-95"
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" /> Sending...
-                </>
-              ) : (
-                "Send Reset Link"
-              )}
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? "Sending..." : "Send Reset Link"}
             </Button>
           </form>
         </CardContent>
