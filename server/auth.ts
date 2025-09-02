@@ -169,24 +169,67 @@ export function setupAuth(app: Express) {
 
       const resetUrl = `https://secure-paste.vercel.app/reset-password?token=${token}`;
 
-      await resend.emails.send({
-        from: "onboarding@resend.dev", // ✅ works for dev, replace with your verified domain in production
-        to: user.email,
-        subject: "Password Reset - SecurePaste",
-        html: `
-          <p>Hello,</p>
-          <p>You requested a password reset. Click the link below to reset:</p>
-          <p><a href="${resetUrl}">${resetUrl}</a></p>
-          <p>This link will expire in 1 hour.</p>
-        `,
-      });
+      try {
+        const response = await resend.emails.send({
+          from: "onboarding@resend.dev", // ✅ works out of the box
+          to: user.email,
+          subject: "Password Reset - SecurePaste",
+          html: `
+            <p>Hello,</p>
+            <p>You requested a password reset. Click the link below to reset:</p>
+            <p><a href="${resetUrl}">${resetUrl}</a></p>
+            <p>This link will expire in 1 hour.</p>
+          `,
+        });
 
-      res.json({ message: "If the email exists, a reset link will be sent" });
+        console.log("📧 Resend response:", response); // ✅ check Render logs
+        res.json({ message: "If the email exists, a reset link will be sent" });
+      } catch (sendError: any) {
+        console.error("❌ Resend email error:", sendError);
+        res.status(500).json({ message: "Failed to send reset email" });
+      }
     } catch (error) {
       console.error("Forgot password error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
+
+  // // ✅ Forgot Password (send real email via Resend)
+  // app.post("/api/forgot-password", async (req, res) => {
+  //   try {
+  //     const { email } = z.object({ email: z.string().email() }).parse(req.body);
+
+  //     const user = await storage.getUserByEmail(email);
+  //     if (!user) {
+  //       // Do not reveal if email exists
+  //       return res.json({ message: "If the email exists, a reset link will be sent" });
+  //     }
+
+  //     const token = randomBytes(32).toString("hex");
+  //     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
+
+  //     await storage.createPasswordReset({ userId: user.id, token, expiresAt });
+
+  //     const resetUrl = `https://secure-paste.vercel.app/reset-password?token=${token}`;
+
+  //     await resend.emails.send({
+  //       from: "onboarding@resend.dev", // ✅ works for dev, replace with your verified domain in production
+  //       to: user.email,
+  //       subject: "Password Reset - SecurePaste",
+  //       html: `
+  //         <p>Hello,</p>
+  //         <p>You requested a password reset. Click the link below to reset:</p>
+  //         <p><a href="${resetUrl}">${resetUrl}</a></p>
+  //         <p>This link will expire in 1 hour.</p>
+  //       `,
+  //     });
+
+  //     res.json({ message: "If the email exists, a reset link will be sent" });
+  //   } catch (error) {
+  //     console.error("Forgot password error:", error);
+  //     res.status(500).json({ message: "Internal server error" });
+  //   }
+  // });
 
   // Reset Password
   app.post("/api/reset-password", async (req, res) => {
