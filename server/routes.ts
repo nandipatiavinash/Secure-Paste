@@ -51,6 +51,26 @@ function getClientIP(req: any): string {
 export function registerRoutes(app: Express): Server {
   setupAuth(app);
 
+  // app.use(
+  //   "/api",
+  //   cors({
+  //     origin: (origin, callback) => {
+  //       const allowedOrigins = [
+  //         "http://localhost:5173",
+  //         "https://secure-paste.vercel.app",
+  //       ];
+  //       const vercelPattern = /\.vercel\.app$/; // allow all preview URLs
+
+  //       if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
+  //         callback(null, true);
+  //       } else {
+  //         callback(new Error("Not allowed by CORS"));
+  //       }
+  //     },
+  //     credentials: true,
+  //   })
+  // );
+
   app.use(
     "/api",
     cors({
@@ -59,17 +79,21 @@ export function registerRoutes(app: Express): Server {
           "http://localhost:5173",
           "https://secure-paste.vercel.app",
         ];
-        const vercelPattern = /\.vercel\.app$/; // allow all preview URLs
+        const vercelPattern = /\.vercel\.app$/;
 
         if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
           callback(null, true);
         } else {
+          console.warn("CORS blocked:", origin);
           callback(new Error("Not allowed by CORS"));
         }
       },
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ allow preflight
       credentials: true,
     })
   );
+
+  app.options("/api/*", cors());
 
  /* --------------------------- Create paste --------------------------- */
 app.post("/api/pastes", async (req, res) => {
