@@ -71,3 +71,18 @@ ALTER TABLE "pastes" ADD CONSTRAINT "pastes_owner_id_users_id_fk" FOREIGN KEY ("
 ALTER TABLE "shareable_links" ADD CONSTRAINT "shareable_links_paste_id_pastes_id_fk" FOREIGN KEY ("paste_id") REFERENCES "public"."pastes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "shareable_links" ADD CONSTRAINT "shareable_links_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+-- 1) Link local users to Supabase Auth users
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS auth_user_id uuid UNIQUE;
+
+-- 2) Make local password optional (we won’t store it anymore)
+ALTER TABLE users
+  ALTER COLUMN password DROP NOT NULL;
+
+-- 3) (Optional) For existing rows where password is required by your app logic,
+--    normalize null/empty to empty string to be safe:
+UPDATE users SET password = '' WHERE password IS NULL;
+
+-- 4) (Optional) Helpful indexes
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_auth_user_id ON users (auth_user_id);
