@@ -1,44 +1,46 @@
+// server/auth.ts
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { Express } from "express";
 import session from "express-session";
-import { scrypt, randomBytes, timingSafeEqual } from "crypto";
-import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
 declare global {
+  // Augment express-user with your shape from @shared/schema
   namespace Express {
     interface User extends SelectUser {}
   }
 }
 
-const scryptAsync = promisify(scrypt);
-
-// ✅ Supabase Admin Client (backend only!)
-const supabaseAdmin = createClient(
+/**
+ * Supabase clients
+ * - supabase: non-admin (uses ANON key) → for signInWithPassword, getUser, etc.
+ * - supabaseAdmin: admin (SERVICE_ROLE key) → for createUser, generate reset links, etc.
+ */
+const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // ⚠️ never expose to frontend
+  process.env.SUPABASE_ANON_KEY!
 );
 
-// ✅ Enforce SESSION_SECRET is set
-if (!process.env.SESSION_SECRET) {
-  throw new Error("❌ SESSION_SECRET is not set in environment variables!");
-}
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-async function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `${buf.toString("hex")}.${salt}`;
-}
-
-async function comparePasswords(supplied: string, stored: string) {
-  const [hashed, salt] = stored.split(".");
-  const hashedBuf = Buffer.from(hashed, "hex");
-  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
-  return timingSafeEqual(hashedBuf, suppliedBuf);
+// Require required envs early
+const requiredEnvs = [
+  "SUPABASE_URL",
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SESSION_SECRET",
+];
+for (const k of requiredEnvs) {
+  if (!process.env[k]) {
+    throw new Error(`❌ Missing env: ${k}`);
+  }
 }
 
 const registerSchema = z.object({
@@ -48,40 +50,55 @@ const registerSchema = z.object({
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string(),
+  password: z.string().min(1),
 });
 
 export function setupAuth(app: Express) {
-  // ✅ Safe session settings
+  // Sessions (keep your same store)
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET!, // guaranteed to exist
+    secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // HTTPS only
+      secure: process.env.NODE_ENV === "production", // HTTPS on Render
       httpOnly: true,
-      sameSite: "none", // allow cross-site cookies
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: "none", // frontend on Vercel; cross-site cookies
+      maxAge: 24 * 60 * 60 * 1000,
     },
   };
 
+  // Behind proxy on Render so cookies marked secure work
   app.set("trust proxy", 1);
   app.use(session(sessionSettings));
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Passport Local Strategy
+  // === PASSPORT STRATEGY ===
+  // Delegate password verification to Supabase.
   passport.use(
     new LocalStrategy({ usernameField: "email" }, async (email, password, done) => {
       try {
-        const user = await storage.getUserByEmail(email);
-        if (!user || !(await comparePasswords(password, user.password))) {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error || !data?.user) {
           return done(null, false);
         }
+
+        // Find or create your local profile linked to Supabase user id
+        let user = await storage.getUserByEmail(email);
+        if (!user) {
+          user = await storage.createUser({
+            // If your table generates its own id, remove `id:` and only store auth_user_id
+            id: data.user.id as unknown as string,
+            email,
+            password: "", // no local password now
+            // @ts-ignore - ensure your createUser accepts this field or add migration (see SQL below)
+            auth_user_id: data.user.id,
+          });
+        }
         return done(null, user);
-      } catch (error) {
-        return done(error);
+      } catch (err) {
+        return done(err);
       }
     })
   );
@@ -96,41 +113,53 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // Register
+  // === ROUTES ===
+
+  // Register — create in Supabase Auth, then your local profile
   app.post("/api/register", async (req, res, next) => {
     try {
       const { email, password } = registerSchema.parse(req.body);
 
-      const existingUser = await storage.getUserByEmail(email);
-      if (existingUser) {
+      // Avoid duplicate email locally (optional; Supabase will also enforce)
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
         return res.status(400).json({ message: "Email already exists" });
       }
 
-      const user = await storage.createUser({
+      const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
         email,
-        password: await hashPassword(password),
+        password,
+        email_confirm: true, // set to false if you want email confirmation flow
+      });
+      if (error || !created?.user) {
+        return res.status(400).json({ message: error?.message ?? "Failed to create user" });
+      }
+
+      const user = await storage.createUser({
+        id: created.user.id as unknown as string,
+        email,
+        password: "",
+        // @ts-ignore ensure column exists
+        auth_user_id: created.user.id,
       });
 
       req.login(user, (err) => {
         if (err) return next(err);
         res.status(201).json({ id: user.id, email: user.email, createdAt: user.createdAt });
       });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: e.errors });
       }
-      next(error);
+      next(e);
     }
   });
 
-  // Login
+  // Login — use Passport (which calls Supabase under the hood)
   app.post("/api/login", (req, res, next) => {
-    try {
-      loginSchema.parse(req.body);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input", errors: error.errors });
-      }
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parsed.error.errors });
     }
 
     passport.authenticate("local", (err: any, user: SelectUser | false) => {
@@ -152,24 +181,24 @@ export function setupAuth(app: Express) {
     });
   });
 
-  // Current User
+  // Current user
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const { password, ...userWithoutPassword } = req.user;
-    res.json(userWithoutPassword);
+    const { password, ...rest } = req.user!;
+    res.json(rest);
   });
 
-  // ✅ Forgot Password via Supabase
+  // Forgot Password — send Supabase recovery email
   app.post("/api/forgot-password", async (req, res) => {
     try {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
 
-      // Supabase handles sending reset email itself
       const { error } = await supabaseAdmin.auth.admin.generateLink({
         type: "recovery",
         email,
         options: {
-          redirectTo: "https://secure-paste.vercel.app/reset-password",
+          // your Vercel frontend reset page
+          redirectTo: "https://secure-paste-six.vercel.app/reset-password",
         },
       });
 
@@ -179,11 +208,12 @@ export function setupAuth(app: Express) {
       }
 
       res.json({ message: "If the email exists, a reset link will be sent" });
-    } catch (error) {
-      console.error("Forgot password error:", error);
+    } catch (e) {
+      console.error("Forgot password error:", e);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // ✅ Reset Password handled by Supabase redirect flow
+  // Optional health for Render
+  app.get("/api/health", (_req, res) => res.send("ok"));
 }
