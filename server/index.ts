@@ -1,45 +1,53 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
 import dotenv from "dotenv";
-import cors from "cors";
+import cors, { CorsOptions } from "cors";
+import { setupVite, serveStatic, log } from "./vite";
+import { registerRoutes } from "./routes";
+import { setupAuth } from "./auth"; // ⬅️ ADD THIS
 
 dotenv.config();
 const app = express();
 
-// ✅ CORS must be before routes/middleware
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      const allowedOrigins = [
-        "http://localhost:5173",              // local dev
-        "https://secure-paste.vercel.app",    // your production frontend
-      ];
-      const vercelPattern = /\.vercel\.app$/; // allow all preview deployments
+/** ---------- CORS (must be before routes/middleware) ---------- */
+const allowedOrigins = [
+  "http://localhost:5173",                 // local dev (Vite)
+  "http://localhost:3000",                 // local dev (Next)
+  "https://secure-paste-six.vercel.app",   // ⬅️ your prod frontend
+];
+const vercelPattern = /\.vercel\.app$/;    // allow all Vercel preview URLs
 
-      if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
-        callback(null, true);
-      } else {
-        console.warn("CORS blocked:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // allow cookies/sessions
-  })
-);
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      vercelPattern.test(origin)
+    ) {
+      callback(null, true);
+    } else {
+      console.warn("CORS blocked:", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true, // allow cookies/sessions across domains
+};
 
-// ✅ also handle preflight OPTIONS
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // handle preflight
 
+/** ---------- JSON parsers ---------- */
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Health check endpoint
+/** ---------- Trust proxy (Render) so secure cookies work ---------- */
+app.set("trust proxy", 1); // ⬅️ IMPORTANT for SameSite=None; Secure cookies
+
+/** ---------- Health check ---------- */
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Logging middleware
+/** ---------- Logging (unchanged) ---------- */
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -69,9 +77,13 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  /** ---------- Auth/session must be BEFORE routes ---------- */
+  setupAuth(app); // ⬅️ This registers express-session + passport
+
+  /** ---------- Your API routes (require sessions/cookies) ---------- */
   const server = await registerRoutes(app);
 
-  // Error handler
+  /** ---------- Error handler ---------- */
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -79,11 +91,10 @@ app.use((req, res, next) => {
     throw err;
   });
 
+  /** ---------- Dev vs static ---------- */
   if (app.get("env") === "development") {
-    // Local dev: use Vite
     await setupVite(app, server);
   } else if (process.env.SERVE_STATIC === "true") {
-    // Only serve static files if explicitly enabled
     serveStatic(app);
   }
 
