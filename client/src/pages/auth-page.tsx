@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useAuth } from "@/hooks/use-auth";
 import { useLocation, Redirect } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Lock, Eye, Clock, UserX, Flame } from "lucide-react";
+import { supabase } from "@/lib/supabaseClient"; // ✅ Create a supabase client instance
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -31,12 +31,12 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 
 export default function AuthPage() {
-  const { user, loginMutation, registerMutation } = useAuth();
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState("login");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  if (user) return <Redirect to="/" />;
-
+  // Forms
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
@@ -47,13 +47,34 @@ export default function AuthPage() {
     defaultValues: { email: "", password: "", confirmPassword: "" },
   });
 
-  const onLogin = (data: LoginFormData) => {
-    loginMutation.mutate(data, { onSuccess: () => setLocation("/") });
+  // ✅ Login
+  const onLogin = async (data: LoginFormData) => {
+    setLoading(true);
+    setError(null);
+    const { email, password } = data;
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setError(error.message);
+    } else {
+      setLocation("/");
+    }
+    setLoading(false);
   };
 
-  const onRegister = (data: RegisterFormData) => {
-    const { confirmPassword, ...registerData } = data;
-    registerMutation.mutate(registerData, { onSuccess: () => setLocation("/") });
+  // ✅ Register
+  const onRegister = async (data: RegisterFormData) => {
+    setLoading(true);
+    setError(null);
+    const { email, password } = data;
+
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      setError(error.message);
+    } else {
+      setLocation("/");
+    }
+    setLoading(false);
   };
 
   const features = [
@@ -88,37 +109,22 @@ export default function AuthPage() {
               <TabsContent value="login">
                 <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
                   <div>
-                    <Label htmlFor="login-email">Email</Label>
-                    <Input
-                      id="login-email"
-                      type="email"
-                      placeholder="your@email.com"
-                      {...loginForm.register("email")}
-                      className="mt-1"
-                    />
+                    <Label>Email</Label>
+                    <Input type="email" placeholder="your@email.com" {...loginForm.register("email")} />
                     {loginForm.formState.errors.email && (
-                      <p className="text-sm text-red-500 mt-1">
-                        {loginForm.formState.errors.email.message}
-                      </p>
+                      <p className="text-sm text-red-500 mt-1">{loginForm.formState.errors.email.message}</p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor="login-password">Password</Label>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      placeholder="••••••••"
-                      {...loginForm.register("password")}
-                      className="mt-1"
-                    />
+                    <Label>Password</Label>
+                    <Input type="password" placeholder="••••••••" {...loginForm.register("password")} />
                     {loginForm.formState.errors.password && (
-                      <p className="text-sm text-red-500 mt-1">
-                        {loginForm.formState.errors.password.message}
-                      </p>
+                      <p className="text-sm text-red-500 mt-1">{loginForm.formState.errors.password.message}</p>
                     )}
                   </div>
-                  <Button type="submit" className="w-full" disabled={loginMutation.isPending}>
-                    {loginMutation.isPending ? "Signing in..." : "Sign In"}
+                  {error && <p className="text-sm text-red-500">{error}</p>}
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Signing in..." : "Sign In"}
                   </Button>
                 </form>
                 {/* Forgot Password link */}
@@ -133,33 +139,29 @@ export default function AuthPage() {
               <TabsContent value="register">
                 <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
                   <div>
-                    <Label htmlFor="register-email">Email</Label>
-                    <Input id="register-email" type="email" placeholder="your@email.com"
-                      {...registerForm.register("email")} className="mt-1" />
+                    <Label>Email</Label>
+                    <Input type="email" placeholder="your@email.com" {...registerForm.register("email")} />
                     {registerForm.formState.errors.email && (
                       <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.email.message}</p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor="register-password">Password</Label>
-                    <Input id="register-password" type="password" placeholder="••••••••"
-                      {...registerForm.register("password")} className="mt-1" />
+                    <Label>Password</Label>
+                    <Input type="password" placeholder="••••••••" {...registerForm.register("password")} />
                     {registerForm.formState.errors.password && (
                       <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.password.message}</p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor="confirm-password">Confirm Password</Label>
-                    <Input id="confirm-password" type="password" placeholder="••••••••"
-                      {...registerForm.register("confirmPassword")} className="mt-1" />
+                    <Label>Confirm Password</Label>
+                    <Input type="password" placeholder="••••••••" {...registerForm.register("confirmPassword")} />
                     {registerForm.formState.errors.confirmPassword && (
-                      <p className="text-sm text-red-500 mt-1">
-                        {registerForm.formState.errors.confirmPassword.message}
-                      </p>
+                      <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.confirmPassword.message}</p>
                     )}
                   </div>
-                  <Button type="submit" className="w-full" disabled={registerMutation.isPending}>
-                    {registerMutation.isPending ? "Creating account..." : "Create Account"}
+                  {error && <p className="text-sm text-red-500">{error}</p>}
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Creating account..." : "Create Account"}
                   </Button>
                 </form>
               </TabsContent>
