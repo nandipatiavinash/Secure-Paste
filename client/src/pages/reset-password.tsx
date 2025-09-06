@@ -23,6 +23,7 @@ type FormData = z.infer<typeof schema>;
 export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -32,6 +33,7 @@ export default function ResetPasswordPage() {
   const onSubmit = async (data: FormData) => {
     setLoading(true);
     setServerError(null);
+    setSuccessMessage(null);
 
     const { error } = await supabase.auth.updateUser({
       password: data.password,
@@ -40,8 +42,10 @@ export default function ResetPasswordPage() {
     if (error) {
       setServerError(error.message);
     } else {
-      alert("✅ Password reset successful! You can now login.");
-      window.location.href = "/auth";
+      setSuccessMessage("✅ Password reset successful! Redirecting to login...");
+      setTimeout(() => {
+        window.location.href = "/auth"; // redirect after success
+      }, 2000);
     }
 
     setLoading(false);
@@ -52,6 +56,9 @@ export default function ResetPasswordPage() {
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">Reset Password</CardTitle>
+          <p className="text-sm text-slate-600 mt-1">
+            Enter your new password below.
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -78,8 +85,15 @@ export default function ResetPasswordPage() {
             {serverError && (
               <p className="text-sm text-red-600">{serverError}</p>
             )}
+            {successMessage && (
+              <p className="text-sm text-green-600">{successMessage}</p>
+            )}
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button
+              type="submit"
+              className="w-full transition-transform active:scale-95"
+              disabled={loading}
+            >
               {loading ? "Resetting..." : "Reset Password"}
             </Button>
           </form>
