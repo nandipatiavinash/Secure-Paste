@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "@/lib/supabaseClient"; // ✅ make sure this points to your initialized supabase client
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -30,7 +30,7 @@ export default function ForgotPasswordPage() {
     setError(null);
 
     const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
-      redirectTo: "https://secure-paste.vercel.app/reset-password",
+      redirectTo: "https://secure-paste.vercel.app/reset-password", // ✅ Supabase will send user here
     });
 
     if (error) {
@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">Forgot Password</CardTitle>
           <p className="text-sm text-slate-600 mt-1">
-            Enter your email to receive a reset link.
+            Enter your email and we’ll send you a reset link.
           </p>
         </CardHeader>
         <CardContent>
@@ -68,12 +68,17 @@ export default function ForgotPasswordPage() {
               )}
             </div>
 
+            {/* ✅ Feedback messages */}
             {serverMessage && (
               <p className="text-sm text-green-600">{serverMessage}</p>
             )}
             {error && <p className="text-sm text-red-600">{error}</p>}
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button
+              type="submit"
+              className="w-full transition-transform active:scale-95"
+              disabled={loading}
+            >
               {loading ? "Sending..." : "Send Reset Link"}
             </Button>
           </form>
