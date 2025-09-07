@@ -47,43 +47,12 @@ export default function AuthPage() {
     defaultValues: { email: "", password: "", confirmPassword: "" },
   });
 
-  // LOGIN
-  const onLogin = async (data: LoginFormData) => {
-    setLoading(true);
-    setError(null);
-    const { email, password } = data;
-  
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
-      setLocation("/");
-    }
-    setLoading(false);
-  };
-  
-  // REGISTER
-  const onRegister = async (data: RegisterFormData) => {
-    setLoading(true);
-    setError(null);
-    const { email, password } = data;
-  
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
-      // user will have to confirm email (unless you change project settings)
-      setLocation("/");
-    }
-    setLoading(false);
-  };
-
-  // // ✅ Login
+  // // LOGIN
   // const onLogin = async (data: LoginFormData) => {
   //   setLoading(true);
   //   setError(null);
   //   const { email, password } = data;
-
+  
   //   const { error } = await supabase.auth.signInWithPassword({ email, password });
   //   if (error) {
   //     setError(error.message);
@@ -92,49 +61,80 @@ export default function AuthPage() {
   //   }
   //   setLoading(false);
   // };
-
-  // // ✅ Register
-  // // client/src/pages/auth-page.tsx -> onRegister
+  
+  // // REGISTER
   // const onRegister = async (data: RegisterFormData) => {
   //   setLoading(true);
   //   setError(null);
   //   const { email, password } = data;
-
-  //   try {
-  //     const resp = await fetch("/api/register", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ email, password, displayName: "" }),
-  //     });
-
-  //     // Read text first (safe), then try parse
-  //     const text = await resp.text();
-  //     let json: any = null;
-  //     try {
-  //       json = text ? JSON.parse(text) : null;
-  //     } catch (parseErr) {
-  //       console.warn("Response not JSON:", text);
-  //     }
-
-  //     if (!resp.ok) {
-  //       const message = json?.message || text || `Request failed (${resp.status})`;
-  //       setError(message);
-  //       console.error("register error:", resp.status, text);
-  //       return;
-  //     }
-
-  //     // success: if server returned json user, you can use it; otherwise proceed
-  //     console.log("register success:", resp.status, json);
-  //     // optionally sign in automatically:
-  //     // await supabase.auth.signInWithPassword({ email, password });
+  
+  //   const { error } = await supabase.auth.signUp({ email, password });
+  //   if (error) {
+  //     setError(error.message);
+  //   } else {
+  //     // user will have to confirm email (unless you change project settings)
   //     setLocation("/");
-  //   } catch (err: any) {
-  //     console.error("Network or unexpected error:", err);
-  //     setError(err.message || "Registration failed");
-  //   } finally {
-  //     setLoading(false);
   //   }
+  //   setLoading(false);
   // };
+
+  // ✅ Login
+  const onLogin = async (data: LoginFormData) => {
+    setLoading(true);
+    setError(null);
+    const { email, password } = data;
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setError(error.message);
+    } else {
+      setLocation("/");
+    }
+    setLoading(false);
+  };
+
+  // ✅ Register
+  // client/src/pages/auth-page.tsx -> onRegister
+  const onRegister = async (data: RegisterFormData) => {
+    setLoading(true);
+    setError(null);
+    const { email, password } = data;
+
+    try {
+      const resp = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, displayName: "" }),
+      });
+
+      // Read text first (safe), then try parse
+      const text = await resp.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch (parseErr) {
+        console.warn("Response not JSON:", text);
+      }
+
+      if (!resp.ok) {
+        const message = json?.message || text || `Request failed (${resp.status})`;
+        setError(message);
+        console.error("register error:", resp.status, text);
+        return;
+      }
+
+      // success: if server returned json user, you can use it; otherwise proceed
+      console.log("register success:", resp.status, json);
+      // optionally sign in automatically:
+      // await supabase.auth.signInWithPassword({ email, password });
+      setLocation("/");
+    } catch (err: any) {
+      console.error("Network or unexpected error:", err);
+      setError(err.message || "Registration failed");
+    } finally {
+      setLoading(false);
+    }
+  };
   // const onRegister = async (data: RegisterFormData) => {
   //   setLoading(true);
   //   setError(null);
