@@ -1,16 +1,16 @@
+// client/src/pages/auth-page.tsx
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useLocation, Redirect } from "wouter";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Lock, Eye, Clock, UserX, Flame } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient"; // ✅ Create a supabase client instance
-import { API_URL } from "@/lib/utils";
+import { supabase } from "@/lib/supabaseClient";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -37,7 +37,6 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Forms
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
@@ -48,168 +47,56 @@ export default function AuthPage() {
     defaultValues: { email: "", password: "", confirmPassword: "" },
   });
 
-  // // LOGIN
-  // const onLogin = async (data: LoginFormData) => {
-  //   setLoading(true);
-  //   setError(null);
-  //   const { email, password } = data;
-  
-  //   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  //   if (error) {
-  //     setError(error.message);
-  //   } else {
-  //     setLocation("/");
-  //   }
-  //   setLoading(false);
-  // };
-  
-  // // REGISTER
-  // const onRegister = async (data: RegisterFormData) => {
-  //   setLoading(true);
-  //   setError(null);
-  //   const { email, password } = data;
-  
-  //   const { error } = await supabase.auth.signUp({ email, password });
-  //   if (error) {
-  //     setError(error.message);
-  //   } else {
-  //     // user will have to confirm email (unless you change project settings)
-  //     setLocation("/");
-  //   }
-  //   setLoading(false);
-  // };
-
-  // ✅ Login
+  // LOGIN (client sign-in)
   const onLogin = async (data: LoginFormData) => {
     setLoading(true);
     setError(null);
-    const { email, password } = data;
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
-      setLocation("/");
+    try {
+      const { data: sessionData, error } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+      if (error) {
+        setError(error.message);
+      } else {
+        // signed in: navigate home
+        setLocation("/");
+      }
+    } catch (err: any) {
+      setError(err.message || "Login failed");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  // client/src/pages/auth-page.tsx -> onRegister
+  // REGISTER (client-side so Supabase sends the confirmation email)
   const onRegister = async (data: RegisterFormData) => {
     setLoading(true);
     setError(null);
-    const { email, password } = data;
-  
     try {
-      // Use client Supabase signUp so email is sent by Supabase automatically
-      const { data, error } = await supabase.auth.signUp({ email, password });
-  
+      const { data: signUpData, error } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+        // optional: you can pass `options: { data: { ... } }` for user_metadata
+      });
+
       if (error) {
         setError(error.message);
         return;
       }
-  
-      // At this point the confirmation email should be sent by Supabase.
-      // Inform user to check email.
-      setLocation("/"); // or show "check your inbox" UI
+
+      // Success: Supabase will send confirmation email. Inform user.
+      // Don't auto-redirect to a protected page — show instruction to check email.
+      alert("Registration successful. Please check your email and confirm your account before signing in.");
+      setActiveTab("login");
     } catch (err: any) {
       setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
-  
-  // ✅ Register
-  // client/src/pages/auth-page.tsx -> onRegister
-  // const onRegister = async (data: RegisterFormData) => {
-  //   setLoading(true);
-  //   setError(null);
-  //   const { email, password } = data;
 
-  //   try {
-  //     const resp = await fetch(`${API_URL}/api/register`, {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ email, password}),
-  //     });
-
-  //     // Read text first (safe), then try parse
-  //     const text = await resp.text();
-  //     let json: any = null;
-  //     try {
-  //       json = text ? JSON.parse(text) : null;
-  //     } catch (parseErr) {
-  //       console.warn("Response not JSON:", text);
-  //     }
-
-  //     if (!resp.ok) {
-  //       const message = json?.message || text || `Request failed (${resp.status})`;
-  //       setError(message);
-  //       console.error("register error:", resp.status, text);
-  //       return;
-  //     }
-
-  //     // success: if server returned json user, you can use it; otherwise proceed
-  //     console.log("register success:", resp.status, json);
-  //     // optionally sign in automatically:
-  //     // after register success
-  //     const loginRes = await supabase.auth.signInWithPassword({ email, password });
-  //     if (loginRes.error) {
-  //       // show friendly message; user exists but could not auto-login
-  //       setError(loginRes.error.message);
-  //     } else {
-  //       setLocation("/"); // now logged in
-  //     }
-  //     // await supabase.auth.signInWithPassword({ email, password });
-  //     // setLocation("/");
-  //   } catch (err: any) {
-  //     console.error("Network or unexpected error:", err);
-  //     setError(err.message || "Registration failed");
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-
-  
-  // const onRegister = async (data: RegisterFormData) => {
-  //   setLoading(true);
-  //   setError(null);
-  //   const { email, password } = data;
-
-  //   try {
-  //     const resp = await fetch("/api/register", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ email, password, displayName: "" }), // pass displayName if available
-  //     });
-  //     const payload = await resp.json();
-  //     if (!resp.ok) {
-  //       setError(payload?.message || "Registration failed");
-  //     } else {
-  //       // Optionally sign the user in automatically on the client:
-  //       await supabase.auth.signInWithPassword({ email, password });
-  //       setLocation("/");
-  //     }
-  //   } catch (err: any) {
-  //     setError(err.message || "Registration failed");
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-  // const onRegister = async (data: RegisterFormData) => {
-  //   setLoading(true);
-  //   setError(null);
-  //   const { email, password } = data;
-
-  //   const { error } = await supabase.auth.signUp({ email, password });
-  //   if (error) {
-  //     setError(error.message);
-  //   } else {
-  //     setLocation("/");
-  //   }
-  //   setLoading(false);
-  // };
-
+  // rest of the component: UI (same as you posted)...
   const features = [
     { icon: Shield, title: "Malware Detection", description: "Advanced scanning for malicious content" },
     { icon: Lock, title: "End-to-End Encryption", description: "AES encryption with password protection" },
@@ -221,7 +108,6 @@ export default function AuthPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
-      {/* Left side - Auth form */}
       <div className="flex-1 flex items-center justify-center p-6">
         <Card className="w-full max-w-md shadow-lg">
           <CardHeader className="text-center">
@@ -238,19 +124,18 @@ export default function AuthPage() {
                 <TabsTrigger value="register">Sign Up</TabsTrigger>
               </TabsList>
 
-              {/* 🔑 LOGIN */}
               <TabsContent value="login">
                 <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
                   <div>
                     <Label>Email</Label>
-                    <Input type="email" placeholder="your@email.com" {...loginForm.register("email")} />
+                    <Input type="email" {...loginForm.register("email")} />
                     {loginForm.formState.errors.email && (
                       <p className="text-sm text-red-500 mt-1">{loginForm.formState.errors.email.message}</p>
                     )}
                   </div>
                   <div>
                     <Label>Password</Label>
-                    <Input type="password" placeholder="••••••••" {...loginForm.register("password")} />
+                    <Input type="password" {...loginForm.register("password")} />
                     {loginForm.formState.errors.password && (
                       <p className="text-sm text-red-500 mt-1">{loginForm.formState.errors.password.message}</p>
                     )}
@@ -260,34 +145,30 @@ export default function AuthPage() {
                     {loading ? "Signing in..." : "Sign In"}
                   </Button>
                 </form>
-                {/* Forgot Password link */}
                 <p className="text-sm mt-3 text-center">
-                  <a href="/forgot-password" className="text-blue-600 hover:underline">
-                    Forgot Password?
-                  </a>
+                  <a href="/forgot-password" className="text-blue-600 hover:underline">Forgot Password?</a>
                 </p>
               </TabsContent>
 
-              {/* 🔑 REGISTER */}
               <TabsContent value="register">
                 <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
                   <div>
                     <Label>Email</Label>
-                    <Input type="email" placeholder="your@email.com" {...registerForm.register("email")} />
+                    <Input type="email" {...registerForm.register("email")} />
                     {registerForm.formState.errors.email && (
                       <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.email.message}</p>
                     )}
                   </div>
                   <div>
                     <Label>Password</Label>
-                    <Input type="password" placeholder="••••••••" {...registerForm.register("password")} />
+                    <Input type="password" {...registerForm.register("password")} />
                     {registerForm.formState.errors.password && (
                       <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.password.message}</p>
                     )}
                   </div>
                   <div>
                     <Label>Confirm Password</Label>
-                    <Input type="password" placeholder="••••••••" {...registerForm.register("confirmPassword")} />
+                    <Input type="password" {...registerForm.register("confirmPassword")} />
                     {registerForm.formState.errors.confirmPassword && (
                       <p className="text-sm text-red-500 mt-1">{registerForm.formState.errors.confirmPassword.message}</p>
                     )}
@@ -303,26 +184,10 @@ export default function AuthPage() {
         </Card>
       </div>
 
-      {/* Right side - Features */}
       <div className="hidden lg:flex flex-1 bg-primary text-primary-foreground p-10 items-center justify-center">
         <div className="max-w-lg space-y-6">
           <h1 className="text-3xl font-bold">Secure, Private, & Protected</h1>
-          <p className="text-lg text-primary-foreground/90">
-            Share your code and sensitive data with confidence. Built-in security scanning, encryption, and privacy controls.
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            {features.map((f, i) => (
-              <div key={i} className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-primary-foreground/10 rounded-lg flex items-center justify-center">
-                  <f.icon className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-sm">{f.title}</h3>
-                  <p className="text-xs text-primary-foreground/70">{f.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <p className="text-lg text-primary-foreground/90">Share your code and sensitive data with confidence.</p>
         </div>
       </div>
     </div>
