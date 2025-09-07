@@ -94,56 +94,83 @@ export default function AuthPage() {
     setLoading(false);
   };
 
-  // ✅ Register
   // client/src/pages/auth-page.tsx -> onRegister
   const onRegister = async (data: RegisterFormData) => {
     setLoading(true);
     setError(null);
     const { email, password } = data;
-
+  
     try {
-      const resp = await fetch(`${API_URL}/api/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password}),
-      });
-
-      // Read text first (safe), then try parse
-      const text = await resp.text();
-      let json: any = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch (parseErr) {
-        console.warn("Response not JSON:", text);
-      }
-
-      if (!resp.ok) {
-        const message = json?.message || text || `Request failed (${resp.status})`;
-        setError(message);
-        console.error("register error:", resp.status, text);
+      // Use client Supabase signUp so email is sent by Supabase automatically
+      const { data, error } = await supabase.auth.signUp({ email, password });
+  
+      if (error) {
+        setError(error.message);
         return;
       }
-
-      // success: if server returned json user, you can use it; otherwise proceed
-      console.log("register success:", resp.status, json);
-      // optionally sign in automatically:
-      // after register success
-      const loginRes = await supabase.auth.signInWithPassword({ email, password });
-      if (loginRes.error) {
-        // show friendly message; user exists but could not auto-login
-        setError(loginRes.error.message);
-      } else {
-        setLocation("/"); // now logged in
-      }
-      // await supabase.auth.signInWithPassword({ email, password });
-      // setLocation("/");
+  
+      // At this point the confirmation email should be sent by Supabase.
+      // Inform user to check email.
+      setLocation("/"); // or show "check your inbox" UI
     } catch (err: any) {
-      console.error("Network or unexpected error:", err);
       setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
+  
+  // ✅ Register
+  // client/src/pages/auth-page.tsx -> onRegister
+  // const onRegister = async (data: RegisterFormData) => {
+  //   setLoading(true);
+  //   setError(null);
+  //   const { email, password } = data;
+
+  //   try {
+  //     const resp = await fetch(`${API_URL}/api/register`, {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ email, password}),
+  //     });
+
+  //     // Read text first (safe), then try parse
+  //     const text = await resp.text();
+  //     let json: any = null;
+  //     try {
+  //       json = text ? JSON.parse(text) : null;
+  //     } catch (parseErr) {
+  //       console.warn("Response not JSON:", text);
+  //     }
+
+  //     if (!resp.ok) {
+  //       const message = json?.message || text || `Request failed (${resp.status})`;
+  //       setError(message);
+  //       console.error("register error:", resp.status, text);
+  //       return;
+  //     }
+
+  //     // success: if server returned json user, you can use it; otherwise proceed
+  //     console.log("register success:", resp.status, json);
+  //     // optionally sign in automatically:
+  //     // after register success
+  //     const loginRes = await supabase.auth.signInWithPassword({ email, password });
+  //     if (loginRes.error) {
+  //       // show friendly message; user exists but could not auto-login
+  //       setError(loginRes.error.message);
+  //     } else {
+  //       setLocation("/"); // now logged in
+  //     }
+  //     // await supabase.auth.signInWithPassword({ email, password });
+  //     // setLocation("/");
+  //   } catch (err: any) {
+  //     console.error("Network or unexpected error:", err);
+  //     setError(err.message || "Registration failed");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
+  
   // const onRegister = async (data: RegisterFormData) => {
   //   setLoading(true);
   //   setError(null);
