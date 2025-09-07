@@ -59,6 +59,19 @@ export default function AuthPage() {
       if (error) {
         setError(error.message);
       } else {
+        try {
+          // ✅ After login, upsert into public.users
+          const userId = loginData.user?.id;
+          if (userId) {
+            await fetch(`${API_URL}/api/post-confirm`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: userId, email }),
+            });
+          }
+        } catch (postErr) {
+          console.warn("post-confirm failed:", postErr);
+        }
         // signed in: navigate home
         setLocation("/");
       }
