@@ -73,22 +73,62 @@ export default function AuthPage() {
       const resp = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, displayName: "" }), // pass displayName if available
+        body: JSON.stringify({ email, password, displayName: "" }),
       });
-      const payload = await resp.json();
-      if (!resp.ok) {
-        setError(payload?.message || "Registration failed");
-      } else {
-        // Optionally sign the user in automatically on the client:
-        await supabase.auth.signInWithPassword({ email, password });
-        setLocation("/");
+
+      // Read text first (safe), then try parse
+      const text = await resp.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch (parseErr) {
+        console.warn("Response not JSON:", text);
       }
+
+      if (!resp.ok) {
+        const message = json?.message || text || `Request failed (${resp.status})`;
+        setError(message);
+        console.error("register error:", resp.status, text);
+        return;
+      }
+
+      // success: if server returned json user, you can use it; otherwise proceed
+      console.log("register success:", resp.status, json);
+      // optionally sign in automatically:
+      // await supabase.auth.signInWithPassword({ email, password });
+      setLocation("/");
     } catch (err: any) {
+      console.error("Network or unexpected error:", err);
       setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
+  // const onRegister = async (data: RegisterFormData) => {
+  //   setLoading(true);
+  //   setError(null);
+  //   const { email, password } = data;
+
+  //   try {
+  //     const resp = await fetch("/api/register", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ email, password, displayName: "" }), // pass displayName if available
+  //     });
+  //     const payload = await resp.json();
+  //     if (!resp.ok) {
+  //       setError(payload?.message || "Registration failed");
+  //     } else {
+  //       // Optionally sign the user in automatically on the client:
+  //       await supabase.auth.signInWithPassword({ email, password });
+  //       setLocation("/");
+  //     }
+  //   } catch (err: any) {
+  //     setError(err.message || "Registration failed");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
   // const onRegister = async (data: RegisterFormData) => {
   //   setLoading(true);
   //   setError(null);
