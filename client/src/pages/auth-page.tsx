@@ -63,19 +63,45 @@ export default function AuthPage() {
   };
 
   // ✅ Register
+  // client/src/pages/auth-page.tsx -> onRegister
   const onRegister = async (data: RegisterFormData) => {
     setLoading(true);
     setError(null);
     const { email, password } = data;
 
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
-      setLocation("/");
+    try {
+      const resp = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, displayName: "" }), // pass displayName if available
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        setError(payload?.message || "Registration failed");
+      } else {
+        // Optionally sign the user in automatically on the client:
+        await supabase.auth.signInWithPassword({ email, password });
+        setLocation("/");
+      }
+    } catch (err: any) {
+      setError(err.message || "Registration failed");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
+  // const onRegister = async (data: RegisterFormData) => {
+  //   setLoading(true);
+  //   setError(null);
+  //   const { email, password } = data;
+
+  //   const { error } = await supabase.auth.signUp({ email, password });
+  //   if (error) {
+  //     setError(error.message);
+  //   } else {
+  //     setLocation("/");
+  //   }
+  //   setLoading(false);
+  // };
 
   const features = [
     { icon: Shield, title: "Malware Detection", description: "Advanced scanning for malicious content" },
