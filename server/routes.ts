@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { Request, Response, NextFunction } from "express"; // 👈 Add Request, Response, NextFunction
 import { createServer, type Server } from "http";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
@@ -6,16 +7,22 @@ import { malwareScanner } from "./services/malware-scanner";
 import { encryptionService } from "./services/encryption";
 import { VirusTotalService } from "./services/virustotal";
 import crypto from "crypto";
-import cors from "cors"; 
-
+import cors from "cors";
+import { authMiddleware } from "./middleware/auth";
+//import signupRouter from "./routes/signup"; 
 
 import {
   insertPasteSchema,
 } from "@shared/schema";
 import { z } from "zod";
 
-function requireAuth(req: any, res: any, next: any) {
-  if (!req.isAuthenticated()) {
+/**
+ * Ensures the request is authenticated by checking for a user on the request object.
+ * This middleware should be applied to routes that require a logged-in user.
+ */
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  // 👈 Use correct Express types
+  if (!req.user?.id) { // 👈 Check for req.user?.id instead of req.isAuthenticated()
     return res.status(401).json({ message: "Authentication required" });
   }
   next();
@@ -38,12 +45,12 @@ function extractDomains(text: string, urls: string[]): string[] {
   return unique.filter((d) => !urls.some((u) => u.includes(d)));
 }
 
-function getClientIP(req: any): string {
+/** Get the client's IP address from the request. */
+function getClientIP(req: Request): string { // 👈 Use correct Express type
   return (
     req.ip ||
-    req.connection?.remoteAddress ||
-    req.socket?.remoteAddress ||
-    (req.connection?.socket ? req.connection.socket.remoteAddress : null) ||
+    (req.connection && (req.connection as any).remoteAddress) || // 👈 Keep `any` here as remoteAddress might not be on the type definition
+    (req.socket && req.socket.remoteAddress) ||
     "0.0.0.0"
   );
 }
@@ -51,28 +58,8 @@ function getClientIP(req: any): string {
 export function registerRoutes(app: Express): Server {
   setupAuth(app);
 
-  // app.use(
-  //   "/api",
-  //   cors({
-  //     origin: (origin, callback) => {
-  //       const allowedOrigins = [
-  //         "http://localhost:5173",
-  //         "https://secure-paste.vercel.app",
-  //       ];
-  //       const vercelPattern = /\.vercel\.app$/; // allow all preview URLs
-
-  //       if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
-  //         callback(null, true);
-  //       } else {
-  //         callback(new Error("Not allowed by CORS"));
-  //       }
-  //     },
-  //     credentials: true,
-  //   })
-  // );
-
+  // 1) CORS first so preflight (OPTIONS) works without auth
   app.use(
-    "/api",
     cors({
       origin: (origin, callback) => {
         const allowedOrigins = [
@@ -88,15 +75,22 @@ export function registerRoutes(app: Express): Server {
           callback(new Error("Not allowed by CORS"));
         }
       },
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ allow preflight
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       credentials: true,
     })
   );
 
+  // allow preflight on API routes
   app.options("/api/*", cors());
 
+  // 2) Apply auth middleware to /api routes only
+  app.use("/api", authMiddleware);
+
+    // 👈 Mount the new signup router
+  //app.use("/auth", signupRouter);
+
  /* --------------------------- Create paste --------------------------- */
-app.post("/api/pastes", async (req, res) => {
+app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { // 👈 Use requireAuth and proper types
   try {
     const pasteData = insertPasteSchema.parse(req.body);
 
@@ -111,7 +105,7 @@ app.post("/api/pastes", async (req, res) => {
     // Local scan (PII/malware heuristics; URLs handled by VT below)
     const local = malwareScanner.scan(pasteData.content);
     const urls = extractAllUrls(pasteData.content);
-    const domains = extractDomains(pasteData.content, urls); // <-- add this
+    const domains = extractDomains(pasteData.content, urls);
 
     // Filter out URL-only notices from local scan; VT decides URL risk
     const filteredLocalThreats = Array.isArray(local.threats)
@@ -124,7 +118,7 @@ app.post("/api/pastes", async (req, res) => {
       : [];
 
     // Respect `force` to override blocking on findings
-    const force = Boolean(req.body?.force ?? false);
+    const force = Boolean((req.body as any)?.force ?? false); // 👈 Use 'as any' for force property
     if ((local.sensitiveData?.length || filteredLocalThreats.length) && !force) {
       return res.status(422).json({
         message: "Sensitive or potentially unsafe content detected",
@@ -155,7 +149,8 @@ app.post("/api/pastes", async (req, res) => {
     console.log("[VT] urls:", urls);
 
        try {
-      const settings = await storage.getUserSettings(req.user?.id || "");
+      // 👈 Use non-null assertion as requireAuth guarantees existence
+      const settings = await storage.getUserSettings(req.user!.id);
       const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
 
       let apiKeyFromSettings: string | null = null;
@@ -267,7 +262,7 @@ app.post("/api/pastes", async (req, res) => {
       ...pasteData,
       content,
       password,
-      ownerId: req.user?.id || null,
+      ownerId: req.user!.id, // 👈 Use non-null assertion
       scanStatus,
       scanResults: JSON.stringify(scanResults),
     });
@@ -291,9 +286,9 @@ app.post("/api/pastes", async (req, res) => {
 });
 
   /* ---------------------------- My pastes ---------------------------- */
-  app.get("/api/my-pastes", requireAuth, async (req, res) => {
+  app.get("/api/my-pastes", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
-      const pastes = await storage.getUserPastes(req.user?.id || "");
+      const pastes = await storage.getUserPastes(req.user!.id); // 👈 Use non-null assertion
       return res.json(
         pastes.map((p) => ({
           id: p.id,
@@ -314,12 +309,12 @@ app.post("/api/pastes", async (req, res) => {
   });
 
   /* ---------------------------- Delete paste ---------------------------- */
-  app.delete("/api/pastes/:id", requireAuth, async (req, res) => {
+  app.delete("/api/pastes/:id", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { id } = req.params;
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user?.id) {
+      if (paste.ownerId !== req.user!.id) { // 👈 Use non-null assertion
         return res.status(403).json({ message: "Not authorized to delete" });
       }
       await storage.deletePasteCascade(id);
@@ -331,7 +326,7 @@ app.post("/api/pastes", async (req, res) => {
   });
 
   /* ---------------------------- Get paste by ID ---------------------------- */
-  app.get("/api/pastes/:id", async (req, res) => {
+  app.get("/api/pastes/:id", async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { id } = req.params;
       const { password } = req.query;
@@ -360,6 +355,7 @@ app.post("/api/pastes", async (req, res) => {
         }
       }
 
+      // 👈 Safely check for req.user?.id
       return res.json({
         id: paste.id,
         content,
@@ -380,12 +376,12 @@ app.post("/api/pastes", async (req, res) => {
   });
 
   /* ----------------------------- Access logs ----------------------------- */
-  app.get("/api/pastes/:id/logs", requireAuth, async (req, res) => {
+  app.get("/api/pastes/:id/logs", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { id } = req.params;
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user?.id) {
+      if (paste.ownerId !== req.user!.id) { // 👈 Use non-null assertion
         return res.status(403).json({ message: "Not authorized to view logs" });
       }
       const logs = await storage.getPasteAccessLogs(id);
@@ -397,10 +393,9 @@ app.post("/api/pastes", async (req, res) => {
   });
 
   /* ---------------------------- Settings (safe) ---------------------------- */
-  app.get("/api/settings", requireAuth, async (req, res) => {
+  app.get("/api/settings", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const userId = req.user!.id; // 👈 Use non-null assertion
   
       let settings = await storage.getUserSettings(userId);
       if (!settings) {
@@ -421,10 +416,9 @@ app.post("/api/pastes", async (req, res) => {
     }
   });
 
-  app.put("/api/settings", requireAuth, async (req, res) => {
+  app.put("/api/settings", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const userId = req.user!.id; // 👈 Use non-null assertion
   
       const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
       const updates: any = { userId };
@@ -481,79 +475,8 @@ app.post("/api/pastes", async (req, res) => {
     }
   });
 
-  /* ----------------------- Optional direct scan endpoint ----------------------- */
-  // app.post("/api/scan", async (req, res) => {
-  //   try {
-  //     const { content } = z.object({ content: z.string() }).parse(req.body);
-  //     const report = malwareScanner.scan(content);
-  //     return res.json(report);
-  //   } catch (error) {
-  //     if (error instanceof z.ZodError) {
-  //       return res.status(400).json({ message: "Invalid input" });
-  //     }
-  //     console.error(error);
-  //     return res.status(500).json({ message: "Scan failed" });
-  //   }
-  // });
-  
-  // app.post("/api/scan", async (req, res) => {
-  //   try {
-  //     const { content } = z.object({ content: z.string() }).parse(req.body);
 
-  //     const local = malwareScanner.scan(content);
-  //     const urls = extractAllUrls(content);
-  //     const domains = extractDomains(content, urls);
-
-  //     const vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
-  //     const threats: string[] = [...local.threats];
-  //     const sensitiveData: string[] = [...local.sensitiveData];
-
-  //     if (vtKey && (urls.length || domains.length)) {
-  //       const vt = new VirusTotalService();
-
-  //       // Domains first (matches VT UI domain reputation)
-  //       for (const d of domains.slice(0, 5)) {
-  //         try {
-  //           const r = await vt.scanDomain(d, vtKey);
-  //           if (r.malicious || r.suspicious) {
-  //             threats.push(`domain:${d} — ${r.positives}/${r.total} engines flagged`);
-  //           }
-  //         } catch (e: any) {
-  //           threats.push(`domain:${d} — vt_error:${e?.message ?? e}`);
-  //         }
-  //       }
-
-  //       // Then URLs
-  //       for (const u of urls.slice(0, 5)) {
-  //         try {
-  //           const r = await vt.scanUrl(u, vtKey, {
-  //             overallTimeoutMs: 15000,
-  //             perRequestTimeoutMs: 6000,
-  //             pollIntervalMs: 1200,
-  //           });
-  //           if (r.malicious || r.suspicious) {
-  //             threats.push(`url:${u} — ${r.positives}/${r.total} engines flagged`);
-  //           }
-  //         } catch (e: any) {
-  //           threats.push(`url:${u} — vt_error:${e?.message ?? e}`);
-  //         }
-  //       }
-  //     } else if (urls.length || domains.length) {
-  //       threats.push("vt_info: VirusTotal not configured; network indicators were not scanned");
-  //     }
-
-  //     const clean = threats.length === 0 && sensitiveData.length === 0;
-  //     return res.json({ clean, threats, sensitiveData });
-  //   } catch (error) {
-  //     if (error instanceof z.ZodError) {
-  //       return res.status(400).json({ message: "Invalid input" });
-  //     }
-  //     console.error(error);
-  //     return res.status(500).json({ message: "Scan failed" });
-  //   }
-  // });
-
-  app.post("/api/scan", async (req, res) => {
+  app.post("/api/scan", async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { content } = z.object({ content: z.string() }).parse(req.body);
 
@@ -564,8 +487,8 @@ app.post("/api/pastes", async (req, res) => {
       const vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
       const threats: string[] = [...local.threats];
       const sensitiveData: string[] = [...local.sensitiveData];
-      const info: string[] = [];           // <-- add this
-      const vtResults: any[] = [];         // <-- optional but handy
+      const info: string[] = [];
+      const vtResults: any[] = [];
 
       if (vtKey && (urls.length || domains.length)) {
         const vt = new VirusTotalService();
@@ -578,7 +501,7 @@ app.post("/api/pastes", async (req, res) => {
               threats.push(`domain:${d} — ${r.positives}/${r.total} engines flagged`);
             }
           } catch (e: any) {
-            info.push(`VirusTotal scan failed for domain ${d}`); // <-- info, not threat
+            info.push(`VirusTotal scan failed for domain ${d}`);
           }
         }
 
@@ -594,11 +517,11 @@ app.post("/api/pastes", async (req, res) => {
               threats.push(`url:${u} — ${r.positives}/${r.total} engines flagged`);
             }
           } catch (e: any) {
-            info.push(`VirusTotal scan failed for ${u}`);        // <-- info, not threat
+            info.push(`VirusTotal scan failed for ${u}`);
           }
         }
       } else if (urls.length || domains.length) {
-        info.push("VirusTotal not configured; network indicators were not scanned."); // <-- info, not threat
+        info.push("VirusTotal not configured; network indicators were not scanned.");
       }
 
       const clean = threats.length === 0 && sensitiveData.length === 0;
@@ -607,9 +530,9 @@ app.post("/api/pastes", async (req, res) => {
         clean,
         threats,
         sensitiveData,
-        info,               // <-- return info separately
+        info,
         urls,
-        vtResults,          // <-- optional
+        vtResults,
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -621,21 +544,21 @@ app.post("/api/pastes", async (req, res) => {
   });
 
   /* ----------------------------- Shareable links ----------------------------- */
-  app.post("/api/pastes/:id/share", requireAuth, async (req, res) => {
+  app.post("/api/pastes/:id/share", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { id } = req.params;
       const { expiresAt, maxUsage } = req.body;
 
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user?.id)
+      if (paste.ownerId !== req.user!.id) // 👈 Use non-null assertion
         return res.status(403).json({ message: "Not authorized" });
 
       const token = crypto.randomBytes(32).toString("hex");
       await storage.createShareableLink({
         pasteId: id,
         token,
-        createdBy: req.user?.id || "",
+        createdBy: req.user!.id, // 👈 Use non-null assertion
         expiresAt: expiresAt ? new Date(expiresAt) : undefined,
         maxUsage: maxUsage || undefined,
       });
@@ -650,7 +573,7 @@ app.post("/api/pastes", async (req, res) => {
     }
   });
 
-  app.get("/api/share/:token", async (req, res) => {
+  app.get("/api/share/:token", async (req: Request, res: Response) => { // 👈 Use proper types
     try {
       const { token } = req.params;
       const { password } = req.query;
