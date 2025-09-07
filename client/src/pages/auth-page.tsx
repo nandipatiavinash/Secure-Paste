@@ -105,7 +105,7 @@ export default function AuthPage() {
       const resp = await fetch(`${API_URL}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, displayName: "" }),
+        body: JSON.stringify({ email, password}),
       });
 
       // Read text first (safe), then try parse
