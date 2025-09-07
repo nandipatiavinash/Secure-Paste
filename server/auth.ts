@@ -19,7 +19,7 @@ export function setupAuth(app: Express) {
       const { data, error } = await supabaseAdmin.auth.admin.createUser({
         email,
         password,
-        email_confirm: true, // auto-confirm for dev; remove if you want verification
+        email_confirm: false, // auto-confirm for dev; remove if you want verification
       });
 
       if (error) {
