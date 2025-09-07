@@ -1,119 +1,35 @@
+// server/auth.ts
 import { Express } from "express";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
-// ✅ Supabase Admin Client (backend only!)
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing - server admin features will fail.");
+}
+
+// Supabase Admin Client (backend only!)
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // ⚠️ never expose to frontend
+  process.env.SUPABASE_URL ?? "",
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
 );
 
 export function setupAuth(app: Express) {
-  // ✅ Register (handled by Supabase)
-  // inside setupAuth(app) — replace current /api/register handler with this
-  app.post("/api/register", async (req, res) => {
-    try {
-      const { email, password, displayName } = z
-        .object({ email: z.string().email(), password: z.string().min(8), displayName: z.string().optional() })
-        .parse(req.body);
-
-      // 1) create auth user
-      const { data, error } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: false,
-        user_metadata: { full_name: displayName ?? null },
-      });
-
-      if (error) {
-        console.error("❌ Supabase register error:", error.message);
-        return res.status(400).json({ message: error.message });
-      }
-
-      const userId = data.user?.id;
-      if (!userId) {
-        console.error("No user id returned from Supabase createUser", data);
-        return res.status(500).json({ message: "Failed to create user" });
-      }
-
-      // after creating the auth user and getting userId
-      // after creating auth user and userId exists
-      const insertPayload = {
-        id: userId,
-        email,
-        created_at: new Date().toISOString(),
-      };
-
-      try {
-        const { data: insertResult, error: insertError } = await supabaseAdmin
-          .from("users")
-          .insert(insertPayload);
-
-        if (insertError) {
-          console.error("INSERT public.users error:", JSON.stringify(insertError, null, 2));
-          // optional: cleanup auth user
-          try { await supabaseAdmin.auth.admin.deleteUser(userId); } catch(_) {}
-          return res.status(500).json({ message: "Failed to insert user", details: insertError });
-        }
-
-        console.log("Inserted public.users row:", insertResult);
-      } catch (err) {
-        console.error("Unexpected error inserting into public.users:", err);
-        try { await supabaseAdmin.auth.admin.deleteUser(userId); } catch(_) {}
-        return res.status(500).json({ message: "Unexpected error inserting user", details: String(err) });
-      }
-      // // 2) insert into public.users
-      // const insertPayload = {
-      //   id: userId,
-      //   email,
-      //   display_name: displayName ?? null,
-      //   created_at: new Date().toISOString(),
-      // };
-
-      // const { error: insertError } = await supabaseAdmin.from("users").insert(insertPayload);
-
-      // if (insertError) {
-      //   console.error("Failed to insert public.users row; cleaning up auth user", insertError);
-      //   // cleanup: remove the previously created auth user to avoid orphan
-      //   try {
-      //     await supabaseAdmin.auth.admin.deleteUser(userId);
-      //   } catch (delErr) {
-      //     console.error("Cleanup deleteUser error (manual cleanup required):", delErr);
-      //   }
-      //   return res.status(500).json({ message: "Failed to create user record" });
-      // }
-
-      return res.status(201).json({ user: data.user });
-    } catch (err) {
-      console.error("Register error:", err);
-      res.status(500).json({ message: "Internal server error" });
-    }
+  /**
+   * NOTE: Normal user signup should be done on the CLIENT with supabase.auth.signUp({ email, password })
+   * That ensures Supabase sends confirmation emails and the standard flows work.
+   *
+   * This /api/register is intentionally disabled for normal signups to avoid admin-created users
+   * which bypass the normal confirm email flow. If you want admin creation later, we can provide
+   * a secured admin-only route.
+   */
+  app.post("/api/register", async (_req, res) => {
+    return res.status(405).json({
+      message:
+        "Use client-side supabase.auth.signUp() for normal signups so confirmation emails are sent. Server-side createUser is reserved for admin use.",
+    });
   });
-  // app.post("/api/register", async (req, res) => {
-  //   try {
-  //     const { email, password } = z
-  //       .object({ email: z.string().email(), password: z.string().min(8) })
-  //       .parse(req.body);
 
-  //     const { data, error } = await supabaseAdmin.auth.admin.createUser({
-  //       email,
-  //       password,
-  //       email_confirm: true, // auto-confirm for dev; remove if you want verification
-  //     });
-
-  //     if (error) {
-  //       console.error("❌ Supabase register error:", error.message);
-  //       return res.status(400).json({ message: error.message });
-  //     }
-
-  //     res.status(201).json({ user: data.user });
-  //   } catch (error) {
-  //     console.error("Register error:", error);
-  //     res.status(500).json({ message: "Internal server error" });
-  //   }
-  // });
-
-  // ✅ Login (client should call Supabase directly, but API helper if you want)
+  // Login: optional server helper (but frontend usually calls Supabase directly)
   app.post("/api/login", async (req, res) => {
     try {
       const { email, password } = z
@@ -129,30 +45,36 @@ export function setupAuth(app: Express) {
         return res.status(401).json({ message: error.message });
       }
 
-      res.json({ session: data.session, user: data.user });
-    } catch (error) {
-      console.error("Login error:", error);
-      res.status(500).json({ message: "Internal server error" });
+      return res.json({ session: data.session, user: data.user });
+    } catch (err) {
+      console.error("Login error:", err);
+      return res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // server/auth.ts (uses supabaseAdmin created with SERVICE_ROLE_KEY)
+  /**
+   * post-confirm: idempotent endpoint to upsert a public.users row using the service role key.
+   * Call this from the client AFTER the user has confirmed email and/or has successfully signed in.
+   *
+   * Body: { id: string, email: string }
+   */
   app.post("/api/post-confirm", async (req, res) => {
-    // Expect a JSON body with { id } OR require Authorization header (JWT) to identify user.
-    // Simpler: pass the user's id in body AFTER verifying session on client.
     try {
-      const { id, email } = req.body;
-      if (!id || !email) return res.status(400).json({ message: "id and email required" });
+      const { id, email } = req.body ?? {};
+      if (!id || !email) {
+        return res.status(400).json({ message: "id and email required in body" });
+      }
 
-      // Upsert so duplicates are OK
+      const payload = { id, email, created_at: new Date().toISOString() };
       const { data, error } = await supabaseAdmin
         .from("users")
-        .upsert({ id, email, created_at: new Date().toISOString() }, { onConflict: "id" });
+        .upsert(payload, { onConflict: "id" });
 
       if (error) {
-        console.error("post-confirm upsert error:", error);
+        console.error("post-confirm upsert error:", JSON.stringify(error, null, 2));
         return res.status(500).json({ message: "Failed to upsert user", details: error.message });
       }
+
       return res.json({ ok: true, user: data?.[0] ?? null });
     } catch (err) {
       console.error("post-confirm error:", err);
@@ -160,23 +82,17 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // ✅ Logout (client usually handles this directly)
+  // Logout (client-side preferred)
   app.post("/api/logout", async (_req, res) => {
-    try {
-      // With Supabase, logout is handled client-side via supabase.auth.signOut()
-      res.json({ message: "Logout handled on client" });
-    } catch (error) {
-      res.status(500).json({ message: "Internal server error" });
-    }
+    return res.json({ message: "Logout should be handled on client via supabase.auth.signOut()" });
   });
 
-  // ✅ Current User
-  app.get("/api/user", async (req, res) => {
-    // Normally retrieved from Supabase client on frontend
-    res.status(400).json({ message: "Use supabase.auth.getUser() on the client" });
+  // Current user placeholder (recommend client uses supabase.auth.getUser())
+  app.get("/api/user", async (_req, res) => {
+    return res.status(400).json({ message: "Use supabase.auth.getUser() on the client" });
   });
 
-  // ✅ Forgot Password via Supabase
+  // Forgot password: generate recovery link via admin.generateLink (server)
   app.post("/api/forgot-password", async (req, res) => {
     try {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
@@ -185,19 +101,20 @@ export function setupAuth(app: Express) {
         type: "recovery",
         email,
         options: {
-          redirectTo: "https://secure-paste.vercel.app/reset-password",
+          // adjust redirectTo to your front-end reset page
+          redirectTo: process.env.FRONTEND_BASE_URL?.replace(/\/$/, "") + "/reset-password" ?? "https://your-frontend/reset-password",
         },
       });
 
       if (error) {
-        console.error("❌ Supabase reset error:", error.message);
-        return res.status(500).json({ message: "Failed to send reset email" });
+        console.error("Supabase reset error:", error);
+        return res.status(500).json({ message: "Failed to send reset email", details: error.message });
       }
 
-      res.json({ message: "If the email exists, a reset link will be sent", data });
-    } catch (error) {
-      console.error("Forgot password error:", error);
-      res.status(500).json({ message: "Internal server error" });
+      return res.json({ message: "If the email exists, a reset link will be sent", data });
+    } catch (err) {
+      console.error("Forgot password error:", err);
+      return res.status(500).json({ message: "Internal server error" });
     }
   });
 }
