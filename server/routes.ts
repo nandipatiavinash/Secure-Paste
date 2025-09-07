@@ -65,6 +65,7 @@ export function registerRoutes(app: Express): Server {
         const allowedOrigins = [
           "http://localhost:5173",
           "https://secure-paste.vercel.app",
+          "https://secure-paste-six.vercel.app",
         ];
         const vercelPattern = /\.vercel\.app$/;
 
