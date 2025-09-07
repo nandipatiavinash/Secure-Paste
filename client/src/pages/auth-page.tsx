@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Lock, Eye, Clock, UserX, Flame } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient"; // ✅ Create a supabase client instance
+import { API_URL } from "@/lib/utils";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -101,7 +102,7 @@ export default function AuthPage() {
     const { email, password } = data;
 
     try {
-      const resp = await fetch("/api/register", {
+      const resp = await fetch(`${API_URL}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, displayName: "" }),
