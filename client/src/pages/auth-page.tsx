@@ -127,7 +127,7 @@ export default function AuthPage() {
       // success: if server returned json user, you can use it; otherwise proceed
       console.log("register success:", resp.status, json);
       // optionally sign in automatically:
-      // await supabase.auth.signInWithPassword({ email, password });
+      await supabase.auth.signInWithPassword({ email, password });
       setLocation("/");
     } catch (err: any) {
       console.error("Network or unexpected error:", err);
