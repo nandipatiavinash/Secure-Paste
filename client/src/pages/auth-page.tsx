@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Lock, Eye, Clock, UserX, Flame } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { API_URL } from "@/lib/utils";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -48,40 +47,88 @@ export default function AuthPage() {
     defaultValues: { email: "", password: "", confirmPassword: "" },
   });
 
-  // LOGIN (client sign-in)
   const onLogin = async (data: LoginFormData) => {
     setLoading(true);
     setError(null);
+    const { email, password } = data;
+  
     try {
-      const { data: sessionData, error } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
+      // signInWithPassword returns { data, error } where data.session/user live under data
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      if (error) {
-        setError(error.message);
-      } else {
-        try {
-          // ✅ After login, upsert into public.users
-          const userId = loginData.user?.id;
-          if (userId) {
-            await fetch(`${API_URL}/api/post-confirm`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id: userId, email }),
-            });
-          }
-        } catch (postErr) {
-          console.warn("post-confirm failed:", postErr);
-        }
-        // signed in: navigate home
-        setLocation("/");
+  
+      if (signInError) {
+        setError(signInError.message);
+        setLoading(false);
+        return;
       }
+  
+      // signInData should contain session and user when successful
+      const user = signInData?.user ?? null;
+      if (!user) {
+        // weird edge-case: no user returned (treat as failure)
+        setError("Login failed: no user returned");
+        setLoading(false);
+        return;
+      }
+  
+      // call your server to upsert into public.users
+      try {
+        await fetch(`${API_URL}/api/post-confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: user.id, email: user.email }),
+        });
+      } catch (postErr) {
+        // non-fatal: warn but don't block login
+        console.warn("post-confirm failed:", postErr);
+      }
+  
+      // successful login -> navigate
+      setLocation("/");
     } catch (err: any) {
-      setError(err.message || "Login failed");
+      console.error("Login error:", err);
+      setError(err?.message || "Unexpected login error");
     } finally {
       setLoading(false);
     }
   };
+  // LOGIN (client sign-in)
+  // const onLogin = async (data: LoginFormData) => {
+  //   setLoading(true);
+  //   setError(null);
+  //   try {
+  //     const { data: sessionData, error } = await supabase.auth.signInWithPassword({
+  //       email: data.email,
+  //       password: data.password,
+  //     });
+  //     if (error) {
+  //       setError(error.message);
+  //     } else {
+  //       try {
+  //         // ✅ After login, upsert into public.users
+  //         const userId = loginData.user?.id;
+  //         if (userId) {
+  //           await fetch(`${API_URL}/api/post-confirm`, {
+  //             method: "POST",
+  //             headers: { "Content-Type": "application/json" },
+  //             body: JSON.stringify({ id: userId, email }),
+  //           });
+  //         }
+  //       } catch (postErr) {
+  //         console.warn("post-confirm failed:", postErr);
+  //       }
+  //       // signed in: navigate home
+  //       setLocation("/");
+  //     }
+  //   } catch (err: any) {
+  //     setError(err.message || "Login failed");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
 
   // REGISTER (client-side so Supabase sends the confirmation email)
   const onRegister = async (data: RegisterFormData) => {
