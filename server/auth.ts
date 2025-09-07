@@ -13,8 +13,8 @@ export function setupAuth(app: Express) {
   // inside setupAuth(app) — replace current /api/register handler with this
   app.post("/api/register", async (req, res) => {
     try {
-      const { email, password, displayName } = z
-        .object({ email: z.string().email(), password: z.string().min(8), displayName: z.string().optional() })
+      const { email, password } = z
+        .object({ email: z.string().email(), password: z.string().min(8)})
         .parse(req.body);
 
       // 1) create auth user
@@ -22,7 +22,6 @@ export function setupAuth(app: Express) {
         email,
         password,
         email_confirm: false,
-        user_metadata: { full_name: displayName ?? null },
       });
 
       if (error) {
