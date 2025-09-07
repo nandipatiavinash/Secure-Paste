@@ -139,7 +139,7 @@ export default function AuthPage() {
       // setLocation("/");
     } catch (err: any) {
       console.error("Network or unexpected error:", err);
-      setError(err.message || "Registration failed");\
+      setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
