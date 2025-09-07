@@ -13,8 +13,8 @@ export function setupAuth(app: Express) {
   // inside setupAuth(app) — replace current /api/register handler with this
   app.post("/api/register", async (req, res) => {
     try {
-      const { email, password } = z
-        .object({ email: z.string().email(), password: z.string().min(8)})
+      const { email, password, displayName } = z
+        .object({ email: z.string().email(), password: z.string().min(8), displayName: z.string().optional() })
         .parse(req.body);
 
       // 1) create auth user
@@ -22,6 +22,7 @@ export function setupAuth(app: Express) {
         email,
         password,
         email_confirm: false,
+        user_metadata: { full_name: displayName ?? null },
       });
 
       if (error) {
@@ -36,27 +37,30 @@ export function setupAuth(app: Express) {
       }
 
       // after creating the auth user and getting userId
+      // after creating auth user and userId exists
       const insertPayload = {
-        id: userId,              // use the auth.users id (uuid)
-        email,                   // user email
-        // DO NOT insert plain password here. If you need a password column for legacy reasons,
-        // keep it NULL or maintain its current hashing strategy. We'll leave it out for now.
+        id: userId,
+        email,
         created_at: new Date().toISOString(),
       };
 
-      const { data: insertResult, error: insertError } = await supabaseAdmin
-        .from("users")
-        .insert(insertPayload);
+      try {
+        const { data: insertResult, error: insertError } = await supabaseAdmin
+          .from("users")
+          .insert(insertPayload);
 
-      if (insertError) {
-        console.error("Failed to insert public.users row; cleaning up auth user", insertError);
-        // optional cleanup
-        try {
-          await supabaseAdmin.auth.admin.deleteUser(userId);
-        } catch (delErr) {
-          console.error("Cleanup deleteUser error (manual cleanup required):", delErr);
+        if (insertError) {
+          console.error("INSERT public.users error:", JSON.stringify(insertError, null, 2));
+          // optional: cleanup auth user
+          try { await supabaseAdmin.auth.admin.deleteUser(userId); } catch(_) {}
+          return res.status(500).json({ message: "Failed to insert user", details: insertError });
         }
-        return res.status(500).json({ message: "Failed to create user record", details: insertError.message });
+
+        console.log("Inserted public.users row:", insertResult);
+      } catch (err) {
+        console.error("Unexpected error inserting into public.users:", err);
+        try { await supabaseAdmin.auth.admin.deleteUser(userId); } catch(_) {}
+        return res.status(500).json({ message: "Unexpected error inserting user", details: String(err) });
       }
       // // 2) insert into public.users
       // const insertPayload = {
@@ -129,6 +133,30 @@ export function setupAuth(app: Express) {
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // server/auth.ts (uses supabaseAdmin created with SERVICE_ROLE_KEY)
+  app.post("/api/post-confirm", async (req, res) => {
+    // Expect a JSON body with { id } OR require Authorization header (JWT) to identify user.
+    // Simpler: pass the user's id in body AFTER verifying session on client.
+    try {
+      const { id, email } = req.body;
+      if (!id || !email) return res.status(400).json({ message: "id and email required" });
+
+      // Upsert so duplicates are OK
+      const { data, error } = await supabaseAdmin
+        .from("users")
+        .upsert({ id, email, created_at: new Date().toISOString() }, { onConflict: "id" });
+
+      if (error) {
+        console.error("post-confirm upsert error:", error);
+        return res.status(500).json({ message: "Failed to upsert user", details: error.message });
+      }
+      return res.json({ ok: true, user: data?.[0] ?? null });
+    } catch (err) {
+      console.error("post-confirm error:", err);
+      return res.status(500).json({ message: "Internal server error" });
     }
   });
 
