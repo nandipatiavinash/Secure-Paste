@@ -10,16 +10,19 @@ const supabaseAdmin = createClient(
 
 export function setupAuth(app: Express) {
   // ✅ Register (handled by Supabase)
+  // inside setupAuth(app) — replace current /api/register handler with this
   app.post("/api/register", async (req, res) => {
     try {
-      const { email, password } = z
-        .object({ email: z.string().email(), password: z.string().min(8) })
+      const { email, password, displayName } = z
+        .object({ email: z.string().email(), password: z.string().min(8), displayName: z.string().optional() })
         .parse(req.body);
 
+      // 1) create auth user
       const { data, error } = await supabaseAdmin.auth.admin.createUser({
         email,
         password,
-        email_confirm: false, // auto-confirm for dev; remove if you want verification
+        email_confirm: false,
+        user_metadata: { full_name: displayName ?? null },
       });
 
       if (error) {
@@ -27,12 +30,85 @@ export function setupAuth(app: Express) {
         return res.status(400).json({ message: error.message });
       }
 
-      res.status(201).json({ user: data.user });
-    } catch (error) {
-      console.error("Register error:", error);
+      const userId = data.user?.id;
+      if (!userId) {
+        console.error("No user id returned from Supabase createUser", data);
+        return res.status(500).json({ message: "Failed to create user" });
+      }
+
+      // after creating the auth user and getting userId
+      const insertPayload = {
+        id: userId,              // use the auth.users id (uuid)
+        email,                   // user email
+        // DO NOT insert plain password here. If you need a password column for legacy reasons,
+        // keep it NULL or maintain its current hashing strategy. We'll leave it out for now.
+        created_at: new Date().toISOString(),
+      };
+
+      const { data: insertResult, error: insertError } = await supabaseAdmin
+        .from("users")
+        .insert(insertPayload);
+
+      if (insertError) {
+        console.error("Failed to insert public.users row; cleaning up auth user", insertError);
+        // optional cleanup
+        try {
+          await supabaseAdmin.auth.admin.deleteUser(userId);
+        } catch (delErr) {
+          console.error("Cleanup deleteUser error (manual cleanup required):", delErr);
+        }
+        return res.status(500).json({ message: "Failed to create user record", details: insertError.message });
+      }
+      // // 2) insert into public.users
+      // const insertPayload = {
+      //   id: userId,
+      //   email,
+      //   display_name: displayName ?? null,
+      //   created_at: new Date().toISOString(),
+      // };
+
+      // const { error: insertError } = await supabaseAdmin.from("users").insert(insertPayload);
+
+      // if (insertError) {
+      //   console.error("Failed to insert public.users row; cleaning up auth user", insertError);
+      //   // cleanup: remove the previously created auth user to avoid orphan
+      //   try {
+      //     await supabaseAdmin.auth.admin.deleteUser(userId);
+      //   } catch (delErr) {
+      //     console.error("Cleanup deleteUser error (manual cleanup required):", delErr);
+      //   }
+      //   return res.status(500).json({ message: "Failed to create user record" });
+      // }
+
+      return res.status(201).json({ user: data.user });
+    } catch (err) {
+      console.error("Register error:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   });
+  // app.post("/api/register", async (req, res) => {
+  //   try {
+  //     const { email, password } = z
+  //       .object({ email: z.string().email(), password: z.string().min(8) })
+  //       .parse(req.body);
+
+  //     const { data, error } = await supabaseAdmin.auth.admin.createUser({
+  //       email,
+  //       password,
+  //       email_confirm: true, // auto-confirm for dev; remove if you want verification
+  //     });
+
+  //     if (error) {
+  //       console.error("❌ Supabase register error:", error.message);
+  //       return res.status(400).json({ message: error.message });
+  //     }
+
+  //     res.status(201).json({ user: data.user });
+  //   } catch (error) {
+  //     console.error("Register error:", error);
+  //     res.status(500).json({ message: "Internal server error" });
+  //   }
+  // });
 
   // ✅ Login (client should call Supabase directly, but API helper if you want)
   app.post("/api/login", async (req, res) => {
