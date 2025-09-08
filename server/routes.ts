@@ -46,18 +46,54 @@ function extractDomains(text: string, urls: string[]): string[] {
 }
 
 /** Get the client's IP address from the request. */
-function getClientIP(req: Request): string { // 👈 Use correct Express type
+function getClientIP(req: Request): string {
+  const xf = req.headers['x-forwarded-for'];
+  if (xf && typeof xf === 'string' && xf.trim().length > 0) {
+    // x-forwarded-for can be comma-separated; use first ip
+    return xf.split(',')[0].trim();
+  }
+  // fallback chain
   return (
     req.ip ||
-    (req.connection && (req.connection as any).remoteAddress) || // 👈 Keep `any` here as remoteAddress might not be on the type definition
-    (req.socket && req.socket.remoteAddress) ||
+    // @ts-ignore - some types don't include connection.remoteAddress
+    (req.connection && (req.connection as any).remoteAddress) ||
+    (req.socket && (req.socket as any).remoteAddress) ||
     "0.0.0.0"
   );
 }
 
 export function registerRoutes(app: Express): Server {
-  setupAuth(app);
+setupAuth(app);
 
+  // If this server sits behind a proxy (Vercel, Cloudflare, etc.), enable this so Express
+  // will use x-forwarded-for for req.ip. Only enable for trusted deployments.
+  app.set('trust proxy', true);
+
+  // TEMP DEBUG: log all incoming requests (remove once solved)
+  app.use((req, res, next) => {
+    console.log('[REQ-DBG]', {
+      method: req.method,
+      url: req.originalUrl,
+      xff: req.headers['x-forwarded-for'],
+      ip: req.ip,
+      sockRemote: req.socket && (req.socket.remoteAddress || null),
+      ua: req.get('User-Agent'),
+    });
+    next();
+  });
+    // DEBUG: temporary request logging — remove when done
+  app.use((req, res, next) => {
+    console.log('[REQ-DBG]', {
+      method: req.method,
+      url: req.originalUrl,
+      // show proxied header explicitly
+      xff: req.headers['x-forwarded-for'],
+      ip: req.ip,
+      sockRemote: req.socket && (req.socket.remoteAddress || null),
+      ua: req.get('User-Agent'),
+    });
+    next();
+  });
   // 1) CORS first so preflight (OPTIONS) works without auth
   app.use(
     cors({
@@ -80,7 +116,36 @@ export function registerRoutes(app: Express): Server {
       credentials: true,
     })
   );
+  /* ------------------- Explicit view endpoint (client calls on mount) ------------------- */
+  app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
 
+      // attempt to insert access log
+      try {
+        const log = await storage.createAccessLog({
+          pasteId: id,
+          viewerIp: getClientIP(req),
+          userAgent: req.get("User-Agent") || "",
+        });
+        console.log('[VIEW-ENDPOINT-LOGGED]', { pasteId: id, logId: log?.id ?? null });
+      } catch (err) {
+        console.error('[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed', err);
+      }
+
+      // increment paste viewCount (best-effort)
+      try {
+        await storage.incrementPasteViews(id);
+      } catch (err) {
+        console.error('[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed', err);
+      }
+
+      return res.status(204).send();
+    } catch (err) {
+      console.error('[VIEW-ENDPOINT] unexpected error', err);
+      return res.status(500).json({ message: "Failed to record view" });
+    }
+  });
   // allow preflight on API routes
   app.options("/api/*", cors());
 
@@ -338,11 +403,17 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       }
 
       // log access
-      await storage.createAccessLog({
-        pasteId: id,
-        viewerIp: getClientIP(req),
-        userAgent: req.get("User-Agent") || "",
-      });
+            // log access — don't block paste serving if logging fails
+      try {
+        const log = await storage.createAccessLog({
+          pasteId: id,
+          viewerIp: getClientIP(req),
+          userAgent: req.get("User-Agent") || "",
+        });
+        console.log('[ACCESS-LOG-INSERTED]', { pasteId: id, logId: log?.id ?? null });
+      } catch (err) {
+        console.error('[ACCESS-LOG-ERROR] createAccessLog failed', err);
+      }
 
       let content = paste.content;
       if (paste.encrypted) {
@@ -591,11 +662,16 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       const paste = await storage.getPaste(link.pasteId);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
 
-      await storage.createAccessLog({
-        pasteId: link.pasteId,
-        viewerIp: getClientIP(req),
-        userAgent: req.get("User-Agent") || "",
-      });
+      try {
+        const log = await storage.createAccessLog({
+          pasteId: link.pasteId,
+          viewerIp: getClientIP(req),
+          userAgent: req.get("User-Agent") || "",
+        });
+        console.log('[ACCESS-LOG-INSERTED]', { pasteId: link.pasteId, logId: log?.id ?? null });
+      } catch (err) {
+        console.error('[ACCESS-LOG-ERROR] createAccessLog (share) failed', err);
+      }
       await storage.incrementLinkUsage(token);
 
       let content = paste.content;
