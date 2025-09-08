@@ -180,13 +180,19 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async getPasteAccessLogs(pasteId: string): Promise<AccessLog[]> {
-    return await db
-      .select()
-      .from(accessLogs)
-      .where(eq(accessLogs.pasteId, pasteId))
-      .orderBy(desc(accessLogs.accessedAt));
-  }
+async getPasteAccessLogs(pasteId: string): Promise<AccessLog[]> {
+  return await db
+    .select({
+      id: accessLogs.id,
+      pasteId: accessLogs.pasteId,
+      viewerIp: accessLogs.viewerIp,      // 👈 force camelCase
+      userAgent: accessLogs.userAgent,
+      accessedAt: accessLogs.accessedAt,
+    })
+    .from(accessLogs)
+    .where(eq(accessLogs.pasteId, pasteId))
+    .orderBy(desc(accessLogs.accessedAt));
+}
 
   // -------- Password Resets --------
   async createPasswordReset(insertReset: InsertPasswordReset): Promise<PasswordReset> {
