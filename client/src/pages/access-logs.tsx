@@ -1,6 +1,7 @@
-import { useState } from "react";
+// client/src/pages/access-logs.tsx
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRoute } from "wouter";
+import { useRoute, Link } from "wouter";
 import { Navigation } from "@/components/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,50 +10,76 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { Link } from "wouter";
 import { API_URL } from "@/lib/utils";
 
+interface RawLog {
+  id?: string;
+  pasteId?: string;
+  viewerIp?: string;
+  viewer_ip?: string;
+  userAgent?: string;
+  user_agent?: string;
+  accessedAt?: string;
+  accessed_at?: string;
+}
+
+/** Normalized log shape used in UI */
 interface AccessLog {
   id: string;
-  pasteId: string;
+  pasteId?: string;
   viewerIp: string;
   userAgent: string;
   accessedAt: string;
 }
 
-export default function AccessLogsPage() {
+export default function AccessLogsPage(): JSX.Element {
   const [, params] = useRoute("/paste/:id/logs");
   const pasteId = params?.id;
 
-  const { data: logs, isLoading, error } = useQuery<AccessLog[]>({
+  const { data: rawLogs, isLoading, error } = useQuery<RawLog[]>({
     queryKey: ["/api/pastes", pasteId, "logs"],
     queryFn: async () => {
       const res = await fetch(`${API_URL}/api/pastes/${pasteId}/logs`, {
-        credentials: 'include'
+        credentials: "include",
       });
       if (!res.ok) {
-        throw new Error('Failed to fetch access logs');
+        throw new Error("Failed to fetch access logs");
       }
       return await res.json();
     },
     enabled: !!pasteId,
+    retry: false,
   });
 
+  // normalize logs to a predictable shape (handles snake_case & camelCase)
+  const logs: AccessLog[] | undefined = rawLogs?.map((r) => ({
+    id: String(r.id ?? cryptoIdFallback()),
+    pasteId: r.pasteId ?? r.pasteId ?? undefined,
+    viewerIp: String(r.viewerIp ?? r.viewer_ip ?? "Unknown"),
+    userAgent: String(r.userAgent ?? r.user_agent ?? ""),
+    accessedAt: String(r.accessedAt ?? r.accessed_at ?? new Date().toISOString()),
+  }));
+
+  function cryptoIdFallback() {
+    // fallback for client-side unique key if server didn't provide id
+    return `local-${Math.random().toString(36).slice(2, 9)}`;
+  }
+
   const getBrowserInfo = (userAgent: string) => {
-    if (userAgent.includes('Chrome')) return { name: 'Chrome', color: 'bg-blue-100 text-blue-800' };
-    if (userAgent.includes('Firefox')) return { name: 'Firefox', color: 'bg-orange-100 text-orange-800' };
-    if (userAgent.includes('Safari')) return { name: 'Safari', color: 'bg-gray-100 text-gray-800' };
-    if (userAgent.includes('Edge')) return { name: 'Edge', color: 'bg-green-100 text-green-800' };
-    return { name: 'Unknown', color: 'bg-slate-100 text-slate-800' };
+    const ua = (userAgent || "").toLowerCase();
+    if (ua.includes("chrome") && !ua.includes("edg")) return { name: "Chrome", color: "bg-blue-100 text-blue-800" };
+    if (ua.includes("firefox")) return { name: "Firefox", color: "bg-orange-100 text-orange-800" };
+    if (ua.includes("safari") && !ua.includes("chrome")) return { name: "Safari", color: "bg-gray-100 text-gray-800" };
+    if (ua.includes("edg") || ua.includes("edge")) return { name: "Edge", color: "bg-green-100 text-green-800" };
+    return { name: "Unknown", color: "bg-slate-100 text-slate-800" };
   };
 
   const getLocationInfo = (ip: string) => {
-    // In a real implementation, you might use a geolocation API
-    // For now, just show the IP and indicate if it's local
-    if (ip.startsWith('127.') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip === '::1') {
-      return { location: 'Local Network', flag: '🏠' };
+    if (!ip || ip === "Unknown") return { location: "Unknown", flag: "❓" };
+    if (ip.startsWith("127.") || ip.startsWith("192.168.") || ip.startsWith("10.") || ip === "::1") {
+      return { location: "Local Network", flag: "🏠" };
     }
-    return { location: 'External', flag: '🌍' };
+    return { location: "External", flag: "🌍" };
   };
 
   if (!pasteId) {
@@ -71,25 +98,27 @@ export default function AccessLogsPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation />
-      
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center space-x-4 mb-4">
             <Button variant="outline" size="sm" asChild>
               <Link href={`/paste/${pasteId}`}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Paste
+                <div className="flex items-center">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Paste
+                </div>
               </Link>
             </Button>
           </div>
-          
+
           <div className="flex items-center space-x-3 mb-2">
             <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
               <Shield className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-slate-900">Access Logs</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Access Logs</h1>
               <p className="text-slate-600">Monitor who has viewed this paste</p>
             </div>
           </div>
@@ -97,11 +126,11 @@ export default function AccessLogsPage() {
 
         {/* Stats Cards */}
         {logs && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             <Card>
-              <CardContent className="p-6">
+              <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center space-x-3">
-                  <Eye className="w-8 h-8 text-blue-600" />
+                  <Eye className="w-7 h-7 text-blue-600" />
                   <div>
                     <p className="text-2xl font-bold text-slate-900">{logs.length}</p>
                     <p className="text-sm text-slate-600">Total Views</p>
@@ -109,28 +138,26 @@ export default function AccessLogsPage() {
                 </div>
               </CardContent>
             </Card>
-            
+
             <Card>
-              <CardContent className="p-6">
+              <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center space-x-3">
-                  <MapPin className="w-8 h-8 text-green-600" />
+                  <MapPin className="w-7 h-7 text-green-600" />
                   <div>
-                    <p className="text-2xl font-bold text-slate-900">
-                      {new Set(logs.map(log => log.viewerIp)).size}
-                    </p>
+                    <p className="text-2xl font-bold text-slate-900">{new Set(logs.map((l) => l.viewerIp)).size}</p>
                     <p className="text-sm text-slate-600">Unique IPs</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
-            
+
             <Card>
-              <CardContent className="p-6">
+              <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center space-x-3">
-                  <Monitor className="w-8 h-8 text-purple-600" />
+                  <Monitor className="w-7 h-7 text-purple-600" />
                   <div>
                     <p className="text-2xl font-bold text-slate-900">
-                      {new Set(logs.map(log => getBrowserInfo(log.userAgent).name)).size}
+                      {new Set(logs.map((l) => getBrowserInfo(l.userAgent).name)).size}
                     </p>
                     <p className="text-sm text-slate-600">Browsers</p>
                   </div>
@@ -164,9 +191,7 @@ export default function AccessLogsPage() {
               </div>
             ) : error ? (
               <Alert>
-                <AlertDescription>
-                  Failed to load access logs. Please try again.
-                </AlertDescription>
+                <AlertDescription>Failed to load access logs. Please try again.</AlertDescription>
               </Alert>
             ) : !logs || logs.length === 0 ? (
               <div className="text-center py-12">
@@ -179,43 +204,45 @@ export default function AccessLogsPage() {
                 {logs.map((log, index) => {
                   const browser = getBrowserInfo(log.userAgent);
                   const location = getLocationInfo(log.viewerIp);
-                  
+
                   return (
                     <div
                       key={log.id}
-                      className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                     >
-                      <div className="flex items-center space-x-4">
-                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
-                          <span className="text-sm font-medium text-slate-600">
-                            #{logs.length - index}
-                          </span>
+                      <div className="flex items-start sm:items-center space-x-4 min-w-0">
+                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-sm font-medium text-slate-600">#{logs.length - index}</span>
                         </div>
-                        
-                        <div>
-                          <div className="flex items-center space-x-2 mb-1">
-                            <span className="font-medium text-slate-900">{log.viewerIp}</span>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-2 mb-1 flex-wrap">
+                            <span className="font-medium text-slate-900 truncate">{log.viewerIp}</span>
                             <span className="text-lg">{location.flag}</span>
                             <Badge variant="secondary" className="text-xs">
                               {location.location}
                             </Badge>
                           </div>
-                          
-                          <div className="flex items-center space-x-3 text-sm text-slate-600">
-                            <div className="flex items-center space-x-1">
-                              <Monitor className="w-3 h-3" />
-                              <Badge className={`text-xs ${browser.color}`}>
-                                {browser.name}
-                              </Badge>
+
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-3 text-sm text-slate-600">
+                            <div className="flex items-center space-x-1 truncate">
+                              <Monitor className="w-3 h-3 flex-shrink-0" />
+                              <Badge className={`text-xs ${browser.color}`}>{browser.name}</Badge>
                             </div>
-                            <div className="flex items-center space-x-1">
+
+                            <div className="flex items-center space-x-1 mt-1 sm:mt-0">
                               <Calendar className="w-3 h-3" />
-                              <span>
+                              <span className="truncate">
                                 {formatDistanceToNow(new Date(log.accessedAt), { addSuffix: true })}
                               </span>
                             </div>
                           </div>
                         </div>
+                      </div>
+
+                      {/* keep UA clipped on small screens, show full time on the right on larger */}
+                      <div className="mt-3 sm:mt-0 text-xs text-slate-500 truncate sm:ml-4 sm:w-48">
+                        {log.userAgent}
                       </div>
                     </div>
                   );
@@ -234,9 +261,7 @@ export default function AccessLogsPage() {
                 <div>
                   <h3 className="font-medium text-blue-900 mb-1">Security Information</h3>
                   <p className="text-sm text-blue-700">
-                    Access logs are automatically collected for security monitoring. 
-                    IP addresses and browser information help track unauthorized access 
-                    and protect your content. Logs are retained for security purposes.
+                    Access logs are automatically collected for security monitoring. IP addresses and browser information help track unauthorized access and protect your content.
                   </p>
                 </div>
               </div>
