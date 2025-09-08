@@ -1,4 +1,3 @@
-// client/src/pages/reset-password.tsx
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,6 +33,8 @@ export default function ResetPasswordPage() {
 
   // parse tokens from url (support fragment and query)
   function parseTokensFromUrl() {
+    // many providers put tokens in hash fragment like:
+    // #access_token=...&refresh_token=...&type=recovery
     const fragment = typeof window !== "undefined" ? window.location.hash : "";
     const fragmentParams = new URLSearchParams(fragment.startsWith("#") ? fragment.slice(1) : fragment);
 
@@ -53,6 +54,7 @@ export default function ResetPasswordPage() {
         const { accessToken, refreshToken } = parseTokensFromUrl();
 
         if (!accessToken) {
+          // No token present — user will need to use form as usual (if you allow changing password without token)
           setHasTokenInUrl(false);
           setAutoSessionDone(true); // allow form flow anyway
           return;
@@ -60,6 +62,9 @@ export default function ResetPasswordPage() {
 
         setHasTokenInUrl(true);
 
+        // supabase.auth.setSession requires both strings in typings.
+        // If refreshToken is missing, cast to any (supabase server may accept).
+        // This cast keeps TypeScript quiet while preserving runtime safety checks below.
         const sessionPayload: any = {
           access_token: accessToken,
           refresh_token: refreshToken ?? "",
@@ -85,6 +90,7 @@ export default function ResetPasswordPage() {
     setServerError(null);
 
     try {
+      // supabase.auth.updateUser requires the user to be signed-in (or a valid session token set above)
       const { error } = await supabase.auth.updateUser({
         password: data.password,
       });
@@ -108,18 +114,18 @@ export default function ResetPasswordPage() {
   if (!autoSessionDone) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-        <div className="p-6 bg-white rounded shadow text-sm">Validating reset link…</div>
+        <div className="p-6 bg-white rounded shadow">Validating reset link…</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4 sm:px-6">
-      <Card className="w-full max-w-md sm:max-w-lg shadow-lg">
-        <CardHeader className="text-center px-6 pt-6">
-          <CardTitle className="text-xl sm:text-2xl font-bold">Reset Password</CardTitle>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+      <Card className="w-full max-w-md shadow-lg">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl font-bold">Reset Password</CardTitle>
         </CardHeader>
-        <CardContent className="px-6 pb-6">
+        <CardContent>
           {!hasTokenInUrl && (
             <p className="text-sm text-slate-600 mb-4">
               We couldn't find a password reset token in the link. If you received a recovery email, make sure you clicked the link in the email. Alternatively request a new reset.
@@ -128,43 +134,28 @@ export default function ResetPasswordPage() {
 
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div>
-              <Label className="text-sm">New Password</Label>
-              <Input
-                type="password"
-                {...form.register("password")}
-                className="w-full text-sm"
-                aria-invalid={!!form.formState.errors.password}
-                placeholder="At least 8 characters"
-              />
+              <Label>New Password</Label>
+              <Input type="password" {...form.register("password")} />
               {form.formState.errors.password && (
-                <p role="alert" className="text-sm text-red-500 mt-1">
+                <p className="text-sm text-red-500 mt-1">
                   {form.formState.errors.password.message}
                 </p>
               )}
             </div>
 
             <div>
-              <Label className="text-sm">Confirm Password</Label>
-              <Input
-                type="password"
-                {...form.register("confirmPassword")}
-                className="w-full text-sm"
-                aria-invalid={!!form.formState.errors.confirmPassword}
-                placeholder="Repeat new password"
-              />
+              <Label>Confirm Password</Label>
+              <Input type="password" {...form.register("confirmPassword")} />
               {form.formState.errors.confirmPassword && (
-                <p role="alert" className="text-sm text-red-500 mt-1">
+                <p className="text-sm text-red-500 mt-1">
                   {form.formState.errors.confirmPassword.message}
                 </p>
               )}
             </div>
 
-            {/* server feedback */}
-            <div aria-live="polite" className="min-h-[1.5rem]">
-              {serverError && <p className="text-sm text-red-600">{serverError}</p>}
-            </div>
+            {serverError && <p className="text-sm text-red-600">{serverError}</p>}
 
-            <Button type="submit" className="w-full py-3" disabled={loading}>
+            <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Resetting..." : "Reset Password"}
             </Button>
           </form>

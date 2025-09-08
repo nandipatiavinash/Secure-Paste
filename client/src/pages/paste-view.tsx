@@ -35,7 +35,7 @@ export default function PasteView() {
 
   const pasteId = params?.id;
 
-  // Query key
+  // Use the tuple form of useQuery to avoid overload/type inference problems
   const queryKey = ["pastes", pasteId, password ? "with-pass" : "no-pass"];
 
   const fetchPaste = async (): Promise<PasteData> => {
@@ -65,7 +65,7 @@ export default function PasteView() {
       }
     }
 
-    // Detect redirected login or HTML responses
+    // Redirected to login or HTML response -> treat as unauthenticated
     if (res.redirected || /\/login/i.test(res.url)) {
       throw new Error("Not authenticated (received a redirect to login).");
     }
@@ -153,8 +153,8 @@ export default function PasteView() {
     return (
       <div className="min-h-screen bg-slate-50">
         <Navigation />
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Card className="w-full max-w-md mx-auto">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <Card className="max-w-md mx-auto">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Lock className="w-5 h-5" />
@@ -170,13 +170,8 @@ export default function PasteView() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
-                  className="w-full"
                 />
-                <Button
-                  onClick={handlePasswordSubmit}
-                  className="w-full"
-                  disabled={!password.trim() || isLoading}
-                >
+                <Button onClick={handlePasswordSubmit} className="w-full" disabled={!password.trim() || isLoading}>
                   <Eye className="w-4 h-4 mr-2" />
                   {isLoading ? "Verifying..." : "View Paste"}
                 </Button>
@@ -192,13 +187,12 @@ export default function PasteView() {
     <div className="min-h-screen bg-slate-50">
       <Navigation />
 
-      {/* Loading state */}
       {isLoading ? (
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div className="p-6 border-b border-slate-200">
               <Skeleton className="h-6 w-48 mb-2" />
-              <Skeleton className="h-4 w-full sm:w-96" />
+              <Skeleton className="h-4 w-96" />
             </div>
             <div className="p-6">
               <Skeleton className="h-64 w-full" />
@@ -206,7 +200,7 @@ export default function PasteView() {
           </div>
         </div>
       ) : error && (error as Error).message !== "Password required" ? (
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>Error loading paste: {(error as Error).message}</AlertDescription>
@@ -214,10 +208,7 @@ export default function PasteView() {
         </div>
       ) : paste ? (
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* PasteDisplay should itself be responsive — ensure it uses w-full / overflow where needed */}
-          <div className="w-full">
-            <PasteDisplay paste={paste} />
-          </div>
+          <PasteDisplay paste={paste} />
         </div>
       ) : null}
     </div>

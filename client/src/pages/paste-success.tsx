@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRoute, Link } from "wouter";
 import { Navigation } from "@/components/navigation";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,9 @@ export default function PasteSuccessPage() {
   const { toast } = useToast();
   const [, params] = useRoute("/paste/:id/success");
   const [copied, setCopied] = useState(false);
-
+  
   const pasteId = params?.id;
-  // guard window in SSR contexts (if any)
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const pasteUrl = `${origin}/paste/${pasteId}`;
+  const pasteUrl = `${window.location.origin}/paste/${pasteId}`;
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -57,16 +55,15 @@ export default function PasteSuccessPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation />
-
-      <div className="max-w-2xl mx-auto px-4 py-12">
-        <Card className="shadow-sm">
-          <CardHeader className="text-center px-6 pt-8">
-            <div className="flex flex-col items-center justify-center mb-4">
+      
+      <div className="max-w-2xl mx-auto px-4 py-16">
+        <Card>
+          <CardHeader className="text-center">
+            <div className="flex justify-center mb-4">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
                 <CheckCircle className="w-8 h-8 text-green-600" />
               </div>
             </div>
-
             <CardTitle className="text-2xl text-slate-900">
               Paste Created Successfully!
             </CardTitle>
@@ -74,83 +71,45 @@ export default function PasteSuccessPage() {
               Your paste has been created and is ready to share.
             </p>
           </CardHeader>
-
-          <CardContent className="space-y-6 px-6 pb-8">
+          
+          <CardContent className="space-y-6">
             {/* Paste URL */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700 block">Paste URL</label>
-
-              <div className="flex flex-col sm:flex-row sm:items-start sm:space-x-2 space-y-2 sm:space-y-0">
-                <div
-                  className="flex-1 px-3 py-2 bg-slate-100 border rounded-lg font-mono text-sm text-slate-700 break-words"
-                  aria-live="polite"
+              <label className="text-sm font-medium text-slate-700">
+                Paste URL
+              </label>
+              <div className="flex space-x-2">
+                <div className="flex-1 px-3 py-2 bg-slate-100 border rounded-lg font-mono text-sm text-slate-700 break-all">
+                  {pasteUrl}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copyToClipboard(pasteUrl)}
+                  className="flex-shrink-0"
                 >
-                  <a
-                    href={pasteUrl}
-                    className="underline break-words"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {pasteUrl}
-                  </a>
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-2 w-full sm:w-auto">
-                  <Button
-                    onClick={() => copyToClipboard(pasteUrl)}
-                    aria-label="Copy paste URL"
-                    className="w-full sm:w-auto"
-                    variant="outline"
-                    size="sm"
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    {copied ? "Copied!" : "Copy"}
-                  </Button>
-
-                  <Button
-                    onClick={() => {
-                      // fallback share using navigator.share if available
-                      if (navigator.share) {
-                        navigator
-                          .share({ title: "SecurePaste", text: "View this paste", url: pasteUrl })
-                          .catch(() => {
-                            /* ignore share errors */
-                          });
-                      } else {
-                        toast({
-                          title: "Share",
-                          description: "Use your device's native share or copy the link.",
-                        });
-                      }
-                    }}
-                    aria-label="Share paste"
-                    className="w-full sm:w-auto mt-2 sm:mt-0"
-                    variant="ghost"
-                    size="sm"
-                  >
-                    <Share className="w-4 h-4 mr-2" />
-                    Share
-                  </Button>
-                </div>
+                  <Copy className="w-4 h-4 mr-1" />
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
               </div>
             </div>
 
             {/* Security Features */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="font-medium text-blue-800 mb-2 flex items-center justify-center sm:justify-start">
+              <h3 className="font-medium text-blue-800 mb-2 flex items-center">
                 <Lock className="w-4 h-4 mr-2" />
                 Security Features Active
               </h3>
-              <div className="space-y-2 text-sm text-blue-700 text-center sm:text-left">
-                <div className="flex items-center justify-center sm:justify-start space-x-2">
-                  <Badge variant="secondary" className="text-xs flex items-center">
+              <div className="space-y-2 text-sm text-blue-700">
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary" className="text-xs">
                     <Eye className="w-3 h-3 mr-1" />
                     Access Logging
                   </Badge>
                   <span>All views are tracked for security</span>
                 </div>
-                <div className="flex items-center justify-center sm:justify-start space-x-2">
-                  <Badge variant="secondary" className="text-xs flex items-center">
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary" className="text-xs">
                     <Calendar className="w-3 h-3 mr-1" />
                     Auto-Expiry
                   </Badge>
@@ -160,25 +119,24 @@ export default function PasteSuccessPage() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Button asChild className="w-full">
-                <Link href={`/paste/${pasteId}`} aria-label="View paste">
+            <div className="flex space-x-3">
+              <Button asChild className="flex-1">
+                <Link href={`/paste/${pasteId}`}>
                   <Eye className="w-4 h-4 mr-2" />
                   View Paste
                 </Link>
               </Button>
-
-              <Button asChild variant="outline" className="w-full">
-                <Link href="/dashboard" aria-label="Go to my pastes">
+              <Button variant="outline" asChild className="flex-1">
+                <Link href="/dashboard">
                   <Share className="w-4 h-4 mr-2" />
                   My Pastes
                 </Link>
               </Button>
             </div>
-
+            
             <div className="text-center">
               <Button variant="ghost" asChild>
-                <Link href="/" aria-label="Create another paste">Create Another Paste</Link>
+                <Link href="/">Create Another Paste</Link>
               </Button>
             </div>
           </CardContent>

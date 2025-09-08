@@ -1,9 +1,8 @@
-// client/src/pages/settings-page.tsx
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Navigation } from "@/components/navigation";
 import { Button } from "@/components/ui/button";
@@ -27,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, Shield, Key, Bell, Clock } from "lucide-react";
+import { Settings, Shield, Key, Bell, Clock } from "lucide-react";
 
 const settingsSchema = z.object({
   virusTotalApiKey: z.string().optional(),
@@ -49,17 +48,10 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const [showApiKey, setShowApiKey] = useState(false);
 
-  // Fetch server settings
   const { data: settings, isLoading } = useQuery<SettingsResponse>({
     queryKey: ["/api/settings"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/settings");
-      if (!res.ok) throw new Error("Failed to load settings");
-      return res.json();
-    },
   });
 
-  // react-hook-form
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
@@ -67,7 +59,6 @@ export default function SettingsPage() {
       emailNotifications: true,
       defaultExpiry: "1d",
     },
-    // If settings are loaded, initialize the form values with them (keeps it responsive)
     values: settings
       ? {
           virusTotalApiKey: settings.hasVirusTotalKey ? MASK : "",
@@ -84,19 +75,17 @@ export default function SettingsPage() {
     hasStoredKey && form.getValues("virusTotalApiKey") === MASK;
 
   const updateSettingsMutation = useMutation({
-    mutationFn: async (data: SettingsFormData & { clearVirusTotalKey?: boolean }) => {
+    mutationFn: async (
+      data: SettingsFormData & { clearVirusTotalKey?: boolean }
+    ) => {
       const updateData: any = { ...data };
 
-      // don't send the mask as the real key
+      // skip sending mask
       if (updateData.virusTotalApiKey === MASK) {
         delete updateData.virusTotalApiKey;
       }
 
       const res = await apiRequest("PUT", "/api/settings", updateData);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || "Failed to update settings");
-      }
       return res.json();
     },
     onSuccess: () => {
@@ -106,10 +95,10 @@ export default function SettingsPage() {
         description: "Your preferences have been saved successfully.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast({
         title: "Update failed",
-        description: error?.message || "Unable to save settings.",
+        description: error.message,
         variant: "destructive",
       });
     },
@@ -132,121 +121,124 @@ export default function SettingsPage() {
     setShowApiKey(true);
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Navigation />
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="animate-pulse">
+            <div className="h-8 bg-slate-200 rounded w-48 mb-6"></div>
+            <div className="space-y-4">
+              <div className="h-32 bg-slate-200 rounded"></div>
+              <div className="h-32 bg-slate-200 rounded"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation />
 
-      <div className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <SettingsIcon className="w-7 h-7 text-primary" />
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Settings</h1>
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="flex items-center space-x-3 mb-8">
+          <Settings className="w-8 h-8 text-primary" />
+          <h1 className="text-3xl font-bold text-slate-900">Settings</h1>
         </div>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* Security & Scanning */}
-            <Card className="mx-0">
+            {/* Security Settings */}
+            <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <Shield className="w-4 h-4" />
+                <CardTitle className="flex items-center space-x-2">
+                  <Shield className="w-5 h-5" />
                   <span>Security & Scanning</span>
                 </CardTitle>
               </CardHeader>
-
               <CardContent className="space-y-4">
                 <FormField
                   control={form.control}
                   name="virusTotalApiKey"
                   render={({ field }) => (
                     <FormItem>
-                      <div className="flex flex-col sm:flex-row sm:items-start sm:gap-4">
-                        <div className="flex-1">
-                          <FormLabel className="flex items-center gap-2">
-                            <Key className="w-4 h-4" />
-                            <span>VirusTotal API Key</span>
-                          </FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Input
-                                type={showApiKey ? "text" : "password"}
-                                placeholder={
-                                  isMasked
-                                    ? "Key is saved — click Replace to enter new one"
-                                    : "Enter your VirusTotal API key"
-                                }
-                                {...field}
-                                value={field.value || ""}
-                                readOnly={isMasked}
-                                autoComplete="off"
-                                className="pr-24" /* leave space for action buttons on small screens */
-                              />
-                              {/* action buttons: positioned inside input area on small screens */}
-                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-2">
-                                {!isMasked && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setShowApiKey((v) => !v)}
-                                  >
-                                    {showApiKey ? "Hide" : "Show"}
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          </FormControl>
-
-                          <FormDescription className="mt-2 block text-sm">
-                            Get your free API key from{" "}
-                            <a
-                              href="https://www.virustotal.com/gui/join-us"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline"
+                      <FormLabel className="flex items-center space-x-2">
+                        <Key className="w-4 h-4" />
+                        <span>VirusTotal API Key</span>
+                      </FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            placeholder={
+                              isMasked
+                                ? "Key is saved — click Replace to enter new one"
+                                : "Enter your VirusTotal API key"
+                            }
+                            {...field}
+                            value={field.value || ""}
+                            readOnly={isMasked}
+                            autoComplete="off"
+                          />
+                          {!isMasked ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="absolute right-2 top-1/2 -translate-y-1/2"
+                              onClick={() => setShowApiKey((v) => !v)}
                             >
-                              VirusTotal
-                            </a>
-                            . This enables real-time malware scanning.
-                          </FormDescription>
-                          <FormMessage />
+                              {showApiKey ? "Hide" : "Show"}
+                            </Button>
+                          ) : null}
                         </div>
-
-                        {/* Buttons stack on small screens below the input */}
-                        <div className="mt-3 sm:mt-0 sm:flex sm:flex-col sm:justify-start sm:gap-2">
-                          {isMasked ? (
-                            <>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={startReplace}
-                              >
-                                Replace key
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={removeApiKey}
-                              >
-                                Remove key
-                              </Button>
-                            </>
-                          ) : settings?.hasVirusTotalKey ? (
+                      </FormControl>
+                      <div className="flex items-center gap-2">
+                        <FormDescription>
+                          Get your free API key from{" "}
+                          <a
+                            href="https://www.virustotal.com/gui/join-us"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                          >
+                            VirusTotal
+                          </a>
+                          . This enables real-time malware scanning.
+                        </FormDescription>
+                        {isMasked ? (
+                          <>
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
-                              className="w-full"
+                              onClick={startReplace}
+                            >
+                              Replace key
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
                               onClick={removeApiKey}
                             >
                               Remove key
                             </Button>
-                          ) : null}
-                        </div>
+                          </>
+                        ) : settings?.hasVirusTotalKey ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={removeApiKey}
+                          >
+                            Remove key
+                          </Button>
+                        ) : null}
                       </div>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
@@ -254,31 +246,34 @@ export default function SettingsPage() {
             </Card>
 
             {/* Preferences */}
-            <Card className="mx-0">
+            <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <SettingsIcon className="w-4 h-4" />
+                <CardTitle className="flex items-center space-x-2">
+                  <Settings className="w-5 h-5" />
                   <span>Preferences</span>
                 </CardTitle>
               </CardHeader>
-
               <CardContent className="space-y-4">
                 <FormField
                   control={form.control}
                   name="emailNotifications"
                   render={({ field }) => (
-                    <FormItem className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border p-4 gap-3">
-                      <div>
-                        <FormLabel className="flex items-center gap-2">
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="flex items-center space-x-2">
                           <Bell className="w-4 h-4" />
                           <span>Email Notifications</span>
                         </FormLabel>
-                        <FormDescription className="text-sm">
-                          Receive email alerts for paste expiry and security events
+                        <FormDescription>
+                          Receive email alerts for paste expiry and security
+                          events
                         </FormDescription>
                       </div>
-                      <FormControl className="self-start sm:self-center">
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
                     </FormItem>
                   )}
@@ -289,31 +284,30 @@ export default function SettingsPage() {
                   name="defaultExpiry"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="flex items-center gap-2">
+                      <FormLabel className="flex items-center space-x-2">
                         <Clock className="w-4 h-4" />
                         <span>Default Paste Expiry</span>
                       </FormLabel>
-
-                      <div className="mt-2 sm:mt-0 max-w-xs">
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select expiry" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="1h">1 Hour</SelectItem>
-                            <SelectItem value="1d">1 Day</SelectItem>
-                            <SelectItem value="1w">1 Week</SelectItem>
-                            <SelectItem value="1m">1 Month</SelectItem>
-                            <SelectItem value="never">Never</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription className="mt-2 text-sm">
-                          New pastes will use this expiry setting by default.
-                        </FormDescription>
-                      </div>
-
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select expiry" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="1h">1 Hour</SelectItem>
+                          <SelectItem value="1d">1 Day</SelectItem>
+                          <SelectItem value="1w">1 Week</SelectItem>
+                          <SelectItem value="1m">1 Month</SelectItem>
+                          <SelectItem value="never">Never</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        New pastes will use this expiry setting by default
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -325,9 +319,11 @@ export default function SettingsPage() {
               <Button
                 type="submit"
                 disabled={updateSettingsMutation.isPending}
-                className="w-full sm:w-40"
+                className="w-32"
               >
-                {updateSettingsMutation.isPending ? "Saving..." : "Save Settings"}
+                {updateSettingsMutation.isPending
+                  ? "Saving..."
+                  : "Save Settings"}
               </Button>
             </div>
           </form>
