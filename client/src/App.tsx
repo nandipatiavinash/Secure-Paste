@@ -25,7 +25,7 @@ function Router() {
       <Route path="/create" component={CreatePage} />
       <Route path="/auth" component={AuthPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
-      <Route path="/auth/callback" component={ResetPasswordPage} /> 
+      <Route path="/reset-password" component={ResetPasswordPage} /> 
       <Route path="/paste/:id/success" component={PasteSuccessPage} />
       <Route path="/paste/:id/logs" component={AccessLogsPage} />
       <Route path="/paste/:id" component={PasteView} />
