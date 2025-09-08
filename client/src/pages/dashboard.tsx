@@ -1,3 +1,4 @@
+// client/src/pages/dashboard.tsx
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Navigation } from "@/components/navigation";
@@ -13,7 +14,6 @@ import {
   Search, 
   Eye, 
   Link2, 
-  BarChart3, 
   Trash2, 
   Lock, 
   Flame, 
@@ -44,6 +44,11 @@ export default function Dashboard() {
 
   const { data: pastes = [], isLoading, error } = useQuery<Paste[]>({
     queryKey: ["/api/my-pastes"],
+    queryFn: async () => {
+      const res = await fetch("/api/my-pastes", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch pastes");
+      return (await res.json()) as Paste[];
+    },
   });
 
   const deleteMutation = useMutation({
@@ -74,7 +79,7 @@ export default function Dashboard() {
         title: "Link copied",
         description: "The paste link has been copied to your clipboard.",
       });
-    } catch (error) {
+    } catch (err) {
       toast({
         title: "Copy failed",
         description: "Unable to copy link to clipboard.",
@@ -114,36 +119,42 @@ export default function Dashboard() {
           <p className="text-slate-600">Manage and monitor your secure pastes</p>
         </div>
 
-        {/* Controls */}
+        {/* Controls (responsive) */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex items-center space-x-4">
-            <div className="relative">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4 w-full sm:w-auto">
+            <div className="relative w-full sm:w-auto">
               <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
               <Input
                 placeholder="Search pastes..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 w-64"
+                className="pl-10 w-full sm:w-64"
               />
             </div>
-            <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All pastes</SelectItem>
-                <SelectItem value="encrypted">Encrypted</SelectItem>
-                <SelectItem value="expiring">Expiring soon</SelectItem>
-                <SelectItem value="self-destruct">Self-destruct</SelectItem>
-              </SelectContent>
-            </Select>
+
+            <div className="mt-3 sm:mt-0 w-full sm:w-48">
+              <Select value={filter} onValueChange={setFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All pastes</SelectItem>
+                  <SelectItem value="encrypted">Encrypted</SelectItem>
+                  <SelectItem value="expiring">Expiring soon</SelectItem>
+                  <SelectItem value="self-destruct">Self-destruct</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Button asChild>
-            <Link href="/">
-              <Plus className="w-4 h-4 mr-2" />
-              New Paste
-            </Link>
-          </Button>
+
+          <div className="w-full sm:w-auto flex justify-start sm:justify-end">
+            <Button asChild>
+              <Link href="/">
+                <Plus className="w-4 h-4 mr-2" />
+                New Paste
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {/* Content */}
@@ -180,96 +191,99 @@ export default function Dashboard() {
           </Card>
         ) : (
           <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Language</TableHead>
-                  <TableHead>Security</TableHead>
-                  <TableHead>Views</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredPastes.map((paste) => (
-                  <TableRow key={paste.id}>
-                    <TableCell>
-                      <div>
-                        <div className="font-medium text-slate-900">
-                          {paste.title || "Untitled Paste"}
-                        </div>
-                        <div className="text-sm text-slate-500">
-                          {formatDistanceToNow(new Date(paste.createdAt))} ago
-                        </div>
-                      </div>
-                    </TableCell>
-                    
-                    <TableCell>
-                      <Badge variant="outline">{paste.language}</Badge>
-                    </TableCell>
-                    
-                    <TableCell>
-                      <div className="flex items-center space-x-1">
-                        {paste.encrypted && (
-                          <Badge variant="secondary">
-                            <Lock className="w-3 h-3 mr-1" />
-                            Encrypted
-                          </Badge>
-                        )}
-                        {paste.selfDestruct && (
-                          <Badge variant="destructive">
-                            <Flame className="w-3 h-3 mr-1" />
-                            Self-destruct
-                          </Badge>
-                        )}
-                        <Badge variant={paste.scanStatus === 'clean' ? 'default' : 'destructive'}>
-                          {paste.scanStatus === 'clean' ? (
-                            <Shield className="w-3 h-3 mr-1" />
-                          ) : (
-                            <AlertTriangle className="w-3 h-3 mr-1" />
-                          )}
-                          {paste.scanStatus === 'clean' ? 'Clean' : 'Flagged'}
-                        </Badge>
-                      </div>
-                    </TableCell>
-                    
-                    <TableCell className="text-slate-900">
-                      {paste.viewCount}
-                    </TableCell>
-                    
-                    <TableCell className="text-slate-900">
-                      {formatExpiry(paste.expiresAt)}
-                    </TableCell>
-                    
-                    <TableCell>
-                      <div className="flex items-center space-x-2">
-                        <Button asChild variant="ghost" size="sm">
-                          <Link href={`/paste/${paste.id}`}>
-                            <Eye className="w-4 h-4" />
-                          </Link>
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => copyLink(paste.id)}
-                        >
-                          <Link2 className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => deleteMutation.mutate(paste.id)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            {/* Horizontal scroll wrapper for small screens */}
+            <div className="overflow-x-auto">
+              <Table className="min-w-[700px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Language</TableHead>
+                    <TableHead>Security</TableHead>
+                    <TableHead>Views</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredPastes.map((paste) => (
+                    <TableRow key={paste.id}>
+                      <TableCell>
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {paste.title || "Untitled Paste"}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {formatDistanceToNow(new Date(paste.createdAt))} ago
+                          </div>
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Badge variant="outline">{paste.language}</Badge>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="flex items-center space-x-1">
+                          {paste.encrypted && (
+                            <Badge variant="secondary">
+                              <Lock className="w-3 h-3 mr-1" />
+                              Encrypted
+                            </Badge>
+                          )}
+                          {paste.selfDestruct && (
+                            <Badge variant="destructive">
+                              <Flame className="w-3 h-3 mr-1" />
+                              Self-destruct
+                            </Badge>
+                          )}
+                          <Badge variant={paste.scanStatus === 'clean' ? 'default' : 'destructive'}>
+                            {paste.scanStatus === 'clean' ? (
+                              <Shield className="w-3 h-3 mr-1" />
+                            ) : (
+                              <AlertTriangle className="w-3 h-3 mr-1" />
+                            )}
+                            {paste.scanStatus === 'clean' ? 'Clean' : 'Flagged'}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell className="text-slate-900">
+                        {paste.viewCount}
+                      </TableCell>
+                      
+                      <TableCell className="text-slate-900">
+                        {formatExpiry(paste.expiresAt)}
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="flex items-center space-x-2">
+                          <Button asChild variant="ghost" size="sm">
+                            <Link href={`/paste/${paste.id}`}>
+                              <Eye className="w-4 h-4" />
+                            </Link>
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => copyLink(paste.id)}
+                          >
+                            <Link2 className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => deleteMutation.mutate(paste.id)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </Card>
         )}
       </div>
