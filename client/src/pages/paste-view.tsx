@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Lock, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { API_URL } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient"; // add at top with other imports
 
 interface PasteData {
   id: string;
@@ -44,11 +45,7 @@ export default function PasteView() {
     const url = password
       ? `/api/pastes/${pasteId}?password=${encodeURIComponent(password)}`
       : `/api/pastes/${pasteId}`;
-
-    const res = await fetch(`${API_URL}${url}`, {
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    });
+    const res = await apiRequest("GET", url);
 
     // 401 handling (password required or not authenticated)
     if (res.status === 401) {
