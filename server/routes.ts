@@ -131,7 +131,17 @@ setupAuth(app);
         console.log('[VIEW-ENDPOINT-LOGGED]', { pasteId: id, logId: log?.id ?? null });
       } catch (err) {
         console.error('[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed', err);
-      }
+      }// log access — don't block paste serving if logging fails
+try {
+  const log = await storage.createAccessLog({
+    pasteId: id,
+    viewerIp: getClientIP(req),
+    userAgent: req.get("User-Agent") || "",
+  });
+  console.log('[ACCESS-LOG-INSERTED]', { pasteId: id, logId: log?.id ?? null });
+} catch (err) {
+  console.error('[ACCESS-LOG-ERROR] createAccessLog failed', err);
+}
 
       // increment paste viewCount (best-effort)
       try {
