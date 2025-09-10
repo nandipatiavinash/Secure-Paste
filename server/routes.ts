@@ -118,30 +118,34 @@ setupAuth(app);
   );
   /* ------------------- Explicit view endpoint (client calls on mount) ------------------- */
   app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-      // attempt to insert access log
-      try {
-        const log = await storage.createAccessLog({
-          pasteId: id,
-          viewerIp: getClientIP(req),
-          userAgent: req.get("User-Agent") || "",
-        });
-        console.log('[VIEW-ENDPOINT-LOGGED]', { pasteId: id, logId: log?.id ?? null });
-      } catch (err) {
-        console.error('[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed', err);
-      }// log access — don't block paste serving if logging fails
-try {
-  const log = await storage.createAccessLog({
-    pasteId: id,
-    viewerIp: getClientIP(req),
-    userAgent: req.get("User-Agent") || "",
-  });
-  console.log('[ACCESS-LOG-INSERTED]', { pasteId: id, logId: log?.id ?? null });
-} catch (err) {
-  console.error('[ACCESS-LOG-ERROR] createAccessLog failed', err);
-}
+    // attempt to insert one access log (best-effort, don't block)
+    try {
+      const log = await storage.createAccessLog({
+        pasteId: id,
+        viewerIp: getClientIP(req),
+        userAgent: req.get("User-Agent") || "",
+      });
+      console.log('[VIEW-ENDPOINT-LOGGED]', { pasteId: id, logId: log?.id ?? null });
+    } catch (err) {
+      console.error('[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed', err);
+    }
+
+    // increment paste viewCount (best-effort)
+    try {
+      await storage.incrementPasteViews(id);
+    } catch (err) {
+      console.error('[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed', err);
+    }
+
+    return res.status(204).send();
+  } catch (err) {
+    console.error('[VIEW-ENDPOINT] unexpected error', err);
+    return res.status(500).json({ message: "Failed to record view" });
+  }
+});
 
       // increment paste viewCount (best-effort)
       try {
