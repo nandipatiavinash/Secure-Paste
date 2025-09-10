@@ -59,18 +59,18 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- helper to extract URLs (simple) ----
+  // ---- helper to extract URLs (simple, client-side only UI) ----
   function extractAllUrls(text: string): string[] {
     const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
     const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
     return Array.from(new Set(cleaned));
   }
 
-  // ---- scan mutation (calls server /api/scan which runs VT + local heuristics) ----
+  // ---- scan mutation (calls your server /api/scan which runs VT + local heuristics) ----
   const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
-      // ensure we return parsed JSON even on 4xx/5xx (apiRequest should still return Response)
+      // intentionally try to parse json body (server returns either 200 or error with json)
       const json = await res.json();
       if (!res.ok) throw json;
       return json;
@@ -86,27 +86,10 @@ export function CreatePasteForm() {
       });
     },
     onError: (err: any) => {
-      // If server returned structured scan info, show it in UI
-      if (err && (err.threats || err.sensitiveData || err.info)) {
-        setScanResult({
-          clean: Boolean(err.clean) || false,
-          threats: err.threats || [],
-          sensitiveData: err.sensitiveData || [],
-          urls: err.urls || [],
-          vtResults: err.vtResults || [],
-          info: err.info || [],
-        });
-        toast({
-          title: "Security scan flagged content",
-          description: "Server scan found possible issues. Review the results below.",
-          variant: "destructive",
-        });
-        return;
-      }
-
+      // err may be object from server or text
       toast({
         title: "Scan failed",
-        description: "Unable to scan content. Please try again.",
+        description: err?.message || "Unable to scan content. Please try again.",
         variant: "destructive",
       });
     },
@@ -117,10 +100,7 @@ export function CreatePasteForm() {
     mutationFn: async (data: FormData) => {
       const res = await apiRequest("POST", "/api/pastes", data);
       const json = await res.json();
-      if (!res.ok) {
-        // throw server response JSON so onError can inspect it
-        throw json;
-      }
+      if (!res.ok) throw json;
       return json as CreatePasteResponse;
     },
     onSuccess: (result: CreatePasteResponse) => {
@@ -131,63 +111,37 @@ export function CreatePasteForm() {
       setLocation(`/paste/${result.id}/success`);
     },
     onError: (err: any) => {
-      // If server returned structured scan info, show it in UI and a sensible toast
-      if (err && (err.threats || err.sensitiveData || err.message)) {
-        if (err.threats || err.sensitiveData) {
-          setScanResult({
-            clean: Boolean(err.clean) || false,
-            threats: err.threats || [],
-            sensitiveData: err.sensitiveData || [],
-            urls: err.urls || [],
-            vtResults: err.vtResults || [],
-            info: err.info || [],
-          });
-          toast({
-            title: "Failed to create paste",
-            description: err.message || "Sensitive or potentially unsafe content detected.",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        // otherwise show message
-        toast({
-          title: "Failed to create paste",
-          description: err.message || "Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
+      // server returns structured error (422) with message + details - show that
+      const message =
+        (err && (err.message || (err?.message === undefined && JSON.stringify(err)))) ||
+        "Please try again.";
       toast({
         title: "Failed to create paste",
-        description: "Please try again.",
+        description: message,
         variant: "destructive",
       });
     },
   });
 
-  // ---- debounced server scan on content change (single, clean effect) ----
+  // ---- debounced auto-scan on content change (backend-only scan) ----
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     const content = form.getValues("content") || "";
 
-    // clear previous timer
     if (debounceRef.current) {
       window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
 
-    // if empty, clear scan result and do not call server
     if (!content.trim()) {
       setScanResult(null);
       return;
     }
 
-    // always call server scan on changes (backend is authoritative)
+    // If there's at least something to scan, call server /api/scan (debounced)
     debounceRef.current = window.setTimeout(() => {
       scanMutation.mutate(content);
-    }, 700); // 700ms debounce
+    }, 700);
 
     return () => {
       if (debounceRef.current) {
@@ -195,6 +149,7 @@ export function CreatePasteForm() {
         debounceRef.current = null;
       }
     };
+    // purposefully using form.watch to re-run when content changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.watch("content")]);
 
@@ -223,7 +178,7 @@ export function CreatePasteForm() {
       return;
     }
 
-    // If scanResult indicates issues, warn user before submit
+    // Optional: if scanResult indicates issues, warn user before submit
     if (scanResult && (!scanResult.clean || (scanResult.sensitiveData && scanResult.sensitiveData.length > 0))) {
       const proceed = window.confirm(
         `Security scan flagged possible issues (${(scanResult.threats?.length || 0) + (scanResult.sensitiveData?.length || 0)}). Are you sure you want to create the paste?`
@@ -247,8 +202,219 @@ export function CreatePasteForm() {
         <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              {/* ... keep the rest of the form unchanged ... */}
-              {/* include the same scan result UI you already have - it will now be populated by server responses */}
+              <FormField
+                control={form.control}
+                name="title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Title (optional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter a title for your paste..." {...field} value={field.value || ""} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="content"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Content</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <Textarea
+                          placeholder="Paste your code or text here..."
+                          className="h-64 font-mono text-sm resize-none"
+                          {...field}
+                        />
+                        <div className="absolute bottom-2 right-2 text-xs text-slate-500">
+                          {field.value.length} characters
+                        </div>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <Label className="text-sm font-medium text-slate-700">Security Options</Label>
+                  <div className="space-y-3">
+                    <FormField
+                      control={form.control}
+                      name="encrypted"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center space-x-2 space-y-0">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value || false}
+                              onCheckedChange={(checked) => {
+                                field.onChange(checked);
+                                setShowPassword(!!checked);
+                              }}
+                            />
+                          </FormControl>
+                          <FormLabel className="text-sm text-slate-700">Encrypt with password</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="selfDestruct"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center space-x-2 space-y-0">
+                          <FormControl>
+                            <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
+                          </FormControl>
+                          <FormLabel className="text-sm text-slate-700">Self-destruct after first view</FormLabel>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="expiryTime"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expiry Settings</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select expiry time" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="never">Never expire</SelectItem>
+                          <SelectItem value="1h">1 hour</SelectItem>
+                          <SelectItem value="1d">1 day</SelectItem>
+                          <SelectItem value="1w">1 week</SelectItem>
+                          <SelectItem value="1m">1 month</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {(encrypted || showPassword) && (
+                <FormField
+                  control={form.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Encryption Password</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="Enter strong password for encryption" {...field} value={field.value || ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <FormField
+                control={form.control}
+                name="language"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Language (for syntax highlighting)</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value || "plaintext"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="plaintext">Plain Text</SelectItem>
+                        <SelectItem value="javascript">JavaScript</SelectItem>
+                        <SelectItem value="python">Python</SelectItem>
+                        <SelectItem value="java">Java</SelectItem>
+                        <SelectItem value="cpp">C++</SelectItem>
+                        <SelectItem value="html">HTML</SelectItem>
+                        <SelectItem value="css">CSS</SelectItem>
+                        <SelectItem value="sql">SQL</SelectItem>
+                        <SelectItem value="json">JSON</SelectItem>
+                        <SelectItem value="xml">XML</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Scan results */}
+              {scanResult && (
+                <Alert className={scanResult.clean ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}>
+                  <div className="flex items-center space-x-2">
+                    {scanResult.clean ? (
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    )}
+                    <span className={`font-medium ${scanResult.clean ? "text-green-700" : "text-amber-700"}`}>
+                      Security scan {scanResult.clean ? "passed" : "flagged content"}
+                    </span>
+                  </div>
+
+                  <AlertDescription className={scanResult.clean ? "text-green-600" : "text-amber-600"}>
+                    {scanResult.clean ? (
+                      "No malicious content or sensitive data patterns detected."
+                    ) : (
+                      <>
+                        <div>
+                          {scanResult.threats?.length ? (
+                            <div><strong>Threats:</strong> {scanResult.threats.join(", ")}</div>
+                          ) : null}
+                          {scanResult.sensitiveData?.length ? (
+                            <div><strong>Sensitive matches:</strong> {scanResult.sensitiveData.join(", ")}</div>
+                          ) : null}
+                          
+                          {scanResult.urls?.length ? (
+                            <div>
+                              <strong>Found URLs:</strong>
+                              <ul className="list-disc ml-6">
+                                {scanResult.urls.map((u) => {
+                                  const vt = (scanResult.vtResults || []).find((r: any) => r.url === u || r.domain === u);
+                                  return (
+                                    <li key={u}>
+                                      {u}
+                                      {vt ? (
+                                        <span className="ml-2 text-sm">
+                                          — {vt.malicious ? `malicious (${vt.positives}/${vt.total})` : vt.suspicious ? `suspicious (${vt.positives}/${vt.total})` : 'clean'}
+                                        </span>
+                                      ) : (
+                                        <span className="ml-2 text-sm text-slate-500"> — VT: unknown / not scanned</span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          ) : null}
+                        </div>
+                      </>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button type="submit" className="flex-1" disabled={createMutation.isPending}>
+                  <Shield className="w-4 h-4 mr-2" />
+                  {createMutation.isPending ? "Creating..." : "Create Secure Paste"}
+                </Button>
+                <Button type="button" variant="outline" onClick={handleScan} disabled={scanMutation.isPending}>
+                  <Search className="w-4 h-4 mr-2" />
+                  {scanMutation.isPending ? "Scanning..." : "Scan First"}
+                </Button>
+              </div>
             </form>
           </Form>
         </div>
