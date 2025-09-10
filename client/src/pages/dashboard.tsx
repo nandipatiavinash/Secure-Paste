@@ -1,24 +1,38 @@
+// client/src/pages/dashboard.tsx
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Navigation } from "@/components/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { 
-  Plus, 
-  Search, 
-  Eye, 
-  Link2, 
-  BarChart3, 
-  Trash2, 
-  Lock, 
-  Flame, 
-  Shield, 
-  AlertTriangle 
+import {
+  Plus,
+  Search,
+  Eye,
+  Link2,
+  Trash2,
+  Lock,
+  Flame,
+  Shield,
+  AlertTriangle,
+  Activity,
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,13 +51,14 @@ interface Paste {
   scanStatus: string;
 }
 
-export default function Dashboard() {
+export default function Dashboard(): JSX.Element {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const [filter, setFilter] = useState("all");
 
   const { data: pastes = [], isLoading, error } = useQuery<Paste[]>({
     queryKey: ["/api/my-pastes"],
+    // default queryFn is provided by queryClient default options in your project
   });
 
   const deleteMutation = useMutation({
@@ -74,7 +89,7 @@ export default function Dashboard() {
         title: "Link copied",
         description: "The paste link has been copied to your clipboard.",
       });
-    } catch (error) {
+    } catch (err) {
       toast({
         title: "Copy failed",
         description: "Unable to copy link to clipboard.",
@@ -83,16 +98,25 @@ export default function Dashboard() {
     }
   };
 
-  const filteredPastes = pastes.filter(paste => {
-    const matchesSearch = !searchTerm || 
-      (paste.title?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+  const confirmAndDelete = (pasteId: string) => {
+    if (!confirm("Delete this paste? This cannot be undone.")) return;
+    deleteMutation.mutate(pasteId);
+  };
+
+  const filteredPastes = (pastes || []).filter((paste) => {
+    const matchesSearch =
+      !searchTerm ||
+      (paste.title && paste.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
       paste.language.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesFilter = filter === "all" ||
+
+    const matchesFilter =
+      filter === "all" ||
       (filter === "encrypted" && paste.encrypted) ||
-      (filter === "expiring" && paste.expiresAt && new Date(paste.expiresAt) > new Date()) ||
+      (filter === "expiring" &&
+        paste.expiresAt &&
+        new Date(paste.expiresAt) > new Date()) ||
       (filter === "self-destruct" && paste.selfDestruct);
-    
+
     return matchesSearch && matchesFilter;
   });
 
@@ -107,7 +131,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation />
-      
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-900 mb-2">My Pastes</h1>
@@ -126,6 +150,7 @@ export default function Dashboard() {
                 className="pl-10 w-64"
               />
             </div>
+
             <Select value={filter} onValueChange={setFilter}>
               <SelectTrigger className="w-48">
                 <SelectValue />
@@ -138,8 +163,9 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
           </div>
+
           <Button asChild>
-            <Link href="/">
+            <Link href="/create">
               <Plus className="w-4 h-4 mr-2" />
               New Paste
             </Link>
@@ -158,22 +184,17 @@ export default function Dashboard() {
         ) : error ? (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
-              Failed to load pastes. Please try again.
-            </AlertDescription>
+            <AlertDescription>Failed to load pastes. Please try again.</AlertDescription>
           </Alert>
         ) : filteredPastes.length === 0 ? (
           <Card>
             <CardContent className="p-12 text-center">
               <div className="text-slate-500 mb-4">
-                {pastes.length === 0 
-                  ? "You haven't created any pastes yet."
-                  : "No pastes match your search criteria."
-                }
+                {pastes.length === 0 ? "You haven't created any pastes yet." : "No pastes match your search criteria."}
               </div>
               {pastes.length === 0 && (
                 <Button asChild>
-                  <Link href="/">Create Your First Paste</Link>
+                  <Link href="/create">Create Your First Paste</Link>
                 </Button>
               )}
             </CardContent>
@@ -191,6 +212,7 @@ export default function Dashboard() {
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
+
               <TableBody>
                 {filteredPastes.map((paste) => (
                   <TableRow key={paste.id}>
@@ -204,63 +226,52 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </TableCell>
-                    
+
                     <TableCell>
                       <Badge variant="outline">{paste.language}</Badge>
                     </TableCell>
-                    
+
                     <TableCell>
                       <div className="flex items-center space-x-1">
                         {paste.encrypted && (
-                          <Badge variant="secondary">
-                            <Lock className="w-3 h-3 mr-1" />
-                            Encrypted
-                          </Badge>
+                          <Badge variant="secondary"><Lock className="w-3 h-3 mr-1" />Encrypted</Badge>
                         )}
                         {paste.selfDestruct && (
-                          <Badge variant="destructive">
-                            <Flame className="w-3 h-3 mr-1" />
-                            Self-destruct
-                          </Badge>
+                          <Badge variant="destructive"><Flame className="w-3 h-3 mr-1" />Self-destruct</Badge>
                         )}
-                        <Badge variant={paste.scanStatus === 'clean' ? 'default' : 'destructive'}>
-                          {paste.scanStatus === 'clean' ? (
-                            <Shield className="w-3 h-3 mr-1" />
-                          ) : (
-                            <AlertTriangle className="w-3 h-3 mr-1" />
-                          )}
-                          {paste.scanStatus === 'clean' ? 'Clean' : 'Flagged'}
+                        <Badge variant={paste.scanStatus === "clean" ? "default" : "destructive"}>
+                          {paste.scanStatus === "clean" ? <><Shield className="w-3 h-3 mr-1" />Clean</> : <><AlertTriangle className="w-3 h-3 mr-1" />Flagged</>}
                         </Badge>
                       </div>
                     </TableCell>
-                    
-                    <TableCell className="text-slate-900">
-                      {paste.viewCount}
-                    </TableCell>
-                    
-                    <TableCell className="text-slate-900">
-                      {formatExpiry(paste.expiresAt)}
-                    </TableCell>
-                    
+
+                    <TableCell className="text-slate-900">{paste.viewCount}</TableCell>
+
+                    <TableCell className="text-slate-900">{formatExpiry(paste.expiresAt)}</TableCell>
+
                     <TableCell>
                       <div className="flex items-center space-x-2">
-                        <Button asChild variant="ghost" size="sm">
-                          <Link href={`/paste/${paste.id}`}>
-                            <Eye className="w-4 h-4" />
-                          </Link>
+                        <Button asChild variant="ghost" size="sm" title="View paste">
+                          <Link href={`/paste/${paste.id}`}><Eye className="w-4 h-4" /></Link>
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => copyLink(paste.id)}
-                        >
+
+                        <Button variant="ghost" size="sm" onClick={() => copyLink(paste.id)} title="Copy link">
                           <Link2 className="w-4 h-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
+
+                        {/* Access logs — shown because this is "My Pastes" (owner) */}
+                        <Button asChild variant="ghost" size="sm" title="Access logs">
+                          <Link href={`/paste/${paste.id}/logs`}>
+                            <Activity className="w-4 h-4" />
+                          </Link>
+                        </Button>
+
+                        <Button
+                          variant="ghost"
                           size="sm"
-                          onClick={() => deleteMutation.mutate(paste.id)}
+                          onClick={() => confirmAndDelete(paste.id)}
                           disabled={deleteMutation.isPending}
+                          title="Delete paste"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
