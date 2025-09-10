@@ -9,7 +9,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield, Copy } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { API_URL } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";  // ✅ add this
+
 
 interface RawLog {
   id?: string;
@@ -37,10 +38,7 @@ export default function AccessLogsPage(): JSX.Element {
   const { data: rawLogs, isLoading, error } = useQuery<RawLog[]>({
     queryKey: ["/api/pastes", pasteId, "logs"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/pastes/${pasteId}/logs`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch access logs");
+      const res = await apiRequest("GET", `/api/pastes/${pasteId}/logs`);
       return await res.json();
     },
     enabled: !!pasteId,
