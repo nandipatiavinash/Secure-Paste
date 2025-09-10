@@ -557,8 +557,25 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       const local = malwareScanner.scan(content);
       const urls = extractAllUrls(content);
       const domains = extractDomains(content, urls);
+      let vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
 
-      const vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
+      try {
+        // If request is authenticated, try to read user's settings
+        if (req.user?.id) {
+          const settings = await storage.getUserSettings(req.user.id);
+          if (settings?.virusTotalApiKey) {
+            try {
+              const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
+              const decrypted = encryptionService.decryptApiKey(settings.virusTotalApiKey, masterKey);
+              if (decrypted && decrypted.trim().length > 0) vtKey = decrypted.trim();
+            } catch (e) {
+              console.warn("Failed to decrypt user's VirusTotal key; using env fallback.", e);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to read user settings for VT key; using env fallback.", err);
+      }
       const threats: string[] = [...local.threats];
       const sensitiveData: string[] = [...local.sensitiveData];
       const info: string[] = [];
