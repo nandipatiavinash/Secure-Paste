@@ -59,43 +59,31 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---------------- client-side quick credential/secret heuristics ----------------
-  function detectCredentials(content: string): string[] {
+  // helper: quick credential detection (simple heuristics)
+  function detectCredentials(text: string): string[] {
     const findings: string[] = [];
-    if (!content) return findings;
-
-    const patterns: { name: string; re: RegExp }[] = [
-      { name: "Basic auth (user:pass)", re: /\b[a-zA-Z0-9._%+-]+:[^\s]{4,}\b/ },
-      { name: "password= or pwd=", re: /\b(password|pwd)\s*[:=]\s*[^,\s]{4,}/i },
-      { name: "AWS Access Key ID", re: /\bAKI[0-9A-Z]{16}\b/ },
-      { name: "Private key (BEGIN PRIVATE KEY)", re: /-----BEGIN (RSA |)?PRIVATE KEY-----/i },
-      { name: "SSH private key", re: /-----BEGIN OPENSSH PRIVATE KEY-----/i },
-      { name: "Google API key-like", re: /AIza[0-9A-Za-z-_]{35}/ },
-      { name: "JWT-like token", re: /\beyJ[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b/ },
-    ];
-
-    for (const p of patterns) {
-      if (p.re.test(content)) findings.push(p.name);
-    }
-
+    // simple regex examples (add more if needed)
+    if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text)) findings.push("Email address");
+    if (/\b(ak[a-z0-9]{16}|AKIA[0-9A-Z]{16})\b/i.test(text)) findings.push("Possible AWS key");
+    if (/\bsk_live_[A-Za-z0-9]{24,}\b/.test(text) || /\bsk_test_[A-Za-z0-9]{24,}\b/.test(text)) findings.push("Possible Stripe key");
+    if (/\b(ssh-rsa|-----BEGIN RSA PRIVATE KEY-----)/i.test(text)) findings.push("Private key material");
     return findings;
   }
 
-  // ---------------- helper: extract URLs (simple) ----------------
+  // helper: extract URLs
   function extractAllUrls(text: string): string[] {
     const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
     const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
     return Array.from(new Set(cleaned));
   }
 
-  // ---------------- scan mutation (server is authoritative) ----------------
+  // mutation: call server /api/scan
   const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
       return await res.json();
     },
     onSuccess: (result: any) => {
-      // result shape from server: { clean, threats, sensitiveData, info, urls, vtResults }
       setScanResult({
         clean: Boolean(result.clean),
         threats: result.threats || [],
@@ -114,7 +102,7 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---------------- create mutation ----------------
+  // create mutation
   const createMutation = useMutation({
     mutationFn: async (data: FormData) => {
       const res = await apiRequest("POST", "/api/pastes", data);
@@ -137,21 +125,7 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- manual scan triggered by button ----
-  const handleScan = () => {
-    const content = form.getValues("content") || "";
-    if (!content.trim()) {
-      toast({
-        title: "No content to scan",
-        description: "Please enter some content first.",
-        variant: "destructive",
-      });
-      return;
-    }
-    scanMutation.mutate(content);
-  };
-
-  // ---------------- auto-scan on content change (debounced) ----------------
+  // debounce server scanning when content changes
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     const content = form.getValues("content") || "";
@@ -162,19 +136,16 @@ export function CreatePasteForm() {
       debounceRef.current = null;
     }
 
-    // if empty, clear scan result and skip
+    // if empty, clear scan result
     if (!content.trim()) {
       setScanResult(null);
       return;
     }
 
-    // quick client-side detection immediately (credentials etc)
+    // quick client-side detection immediately
     const clientFindings = detectCredentials(content);
-
-    // extract URLs (client-side only to decide if we should call VT)
     const urls = extractAllUrls(content);
 
-    // show immediate client-side findings (UX)
     if (clientFindings.length > 0) {
       setScanResult((prev) => ({
         clean: false,
@@ -186,17 +157,14 @@ export function CreatePasteForm() {
       }));
     }
 
-    // Decide whether to call server /api/scan:
-    // -> Only call if we have credentials OR at least one URL (so VT gets run for URLs).
+    // Only call server scan if we have credentials or URLs
     if (clientFindings.length === 0 && urls.length === 0) {
-      // nothing worth scanning by server yet
       return;
     }
 
-    // debounce server scan (VT) to avoid excessive calls while typing
     debounceRef.current = window.setTimeout(() => {
       scanMutation.mutate(content);
-    }, 700); // 700ms debounce
+    }, 700);
 
     return () => {
       if (debounceRef.current) {
@@ -207,7 +175,21 @@ export function CreatePasteForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.watch("content")]);
 
-  // ---------------- submit handler ----------------
+  // manual scan button
+  const handleScan = () => {
+    const content = form.getValues("content");
+    if (!content.trim()) {
+      toast({
+        title: "No content to scan",
+        description: "Please enter some content first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    scanMutation.mutate(content);
+  };
+
+  // submit paste
   const onSubmit = (data: FormData) => {
     if (data.encrypted && !data.password) {
       toast({
@@ -218,7 +200,6 @@ export function CreatePasteForm() {
       return;
     }
 
-    // If server scan flagged issues, ask user to confirm
     if (scanResult && (!scanResult.clean || (scanResult.sensitiveData && scanResult.sensitiveData.length > 0))) {
       const proceed = window.confirm(
         `Security scan flagged possible issues (${(scanResult.threats?.length || 0) + (scanResult.sensitiveData?.length || 0)}). Are you sure you want to create the paste?`
@@ -389,7 +370,6 @@ export function CreatePasteForm() {
                 )}
               />
 
-              {/* Scan results */}
               {scanResult && (
                 <Alert className={scanResult.clean ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}>
                   <div className="flex items-center space-x-2">
