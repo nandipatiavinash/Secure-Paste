@@ -89,19 +89,18 @@ export function CreatePasteForm() {
   }
 
   // ---- scan mutation (calls your server /api/scan which runs VT + local heuristics) ----
-  const scanMutation = useMutation({
+    const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
       return await res.json();
     },
     onSuccess: (result: any) => {
-      // result shape from server: { clean, threats, sensitiveData, info, urls, vtResults }
-      const clientFindings = detectCredentials(form.getValues("content"));
-      const mergedSensitive = Array.from(new Set([...(result.sensitiveData || []), ...clientFindings]));
+      // Server returns: { clean, threats, sensitiveData, info, urls, vtResults }
+      // Use server's authoritative result only (no client-side merging).
       setScanResult({
-        clean: result.clean && mergedSensitive.length === 0,
+        clean: Boolean(result.clean),
         threats: result.threats || [],
-        sensitiveData: mergedSensitive,
+        sensitiveData: result.sensitiveData || [],
         urls: result.urls || [],
         vtResults: result.vtResults || [],
         info: result.info || [],
@@ -115,7 +114,6 @@ export function CreatePasteForm() {
       });
     },
   });
-
   // ---- create mutation ----
   const createMutation = useMutation({
     mutationFn: async (data: FormData) => {
