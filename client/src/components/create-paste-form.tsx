@@ -154,44 +154,61 @@ export function CreatePasteForm() {
   };
 
   // ---- auto-scan on content change (debounced) ----
-  const debounceRef = useRef<number | null>(null);
-  useEffect(() => {
-    const content = form.getValues("content") || "";
-    // clear previous
+// ---- auto-scan on content change (debounced) ----
+const debounceRef = useRef<number | null>(null);
+useEffect(() => {
+  const content = form.getValues("content") || "";
+
+  // clear previous timer
+  if (debounceRef.current) {
+    window.clearTimeout(debounceRef.current);
+    debounceRef.current = null;
+  }
+
+  // if empty, clear scan result
+  if (!content.trim()) {
+    setScanResult(null);
+    return;
+  }
+
+  // quick client-side detection immediately (credentials etc)
+  const clientFindings = detectCredentials(content);
+
+  // extract URLs (client-side only to decide if we should call VT)
+  const urls = extractAllUrls(content);
+
+  // If there are immediate credential findings, show them right away (UX)
+  if (clientFindings.length > 0) {
+    setScanResult((prev) => ({
+      clean: false,
+      threats: prev?.threats ?? [],
+      sensitiveData: clientFindings,
+      urls: prev?.urls ?? [],
+      vtResults: prev?.vtResults ?? [],
+      info: prev?.info ?? [],
+    }));
+  }
+
+  // Decide whether to call server /api/scan:
+  // -> Only call if we have credentials OR at least one URL (so VT gets run for URLs).
+  if (clientFindings.length === 0 && urls.length === 0) {
+    // nothing worth scanning by server yet
+    return;
+  }
+
+  // debounce server scan (VT) to avoid excessive calls while typing
+  debounceRef.current = window.setTimeout(() => {
+    scanMutation.mutate(content);
+  }, 700); // 700ms debounce
+
+  return () => {
     if (debounceRef.current) {
       window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    // if empty, clear scan result
-    if (!content.trim()) {
-      setScanResult(null);
-      return;
-    }
-
-    // quick client-side detection immediately (credentials etc)
-    const clientFindings = detectCredentials(content);
-    if (clientFindings.length > 0) {
-      // show immediate feedback while server VT/more thorough scan runs
-      setScanResult((prev) => ({
-        clean: false,
-        threats: prev?.threats ?? [],
-        sensitiveData: clientFindings,
-      }));
-    }
-
-    // debounce server scan (VT) to avoid excessive calls while typing
-    debounceRef.current = window.setTimeout(() => {
-      scanMutation.mutate(content);
-    }, 700); // 700ms debounce
-
-    return () => {
-      if (debounceRef.current) {
-        window.clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.watch("content")]); // watch content
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.watch("content")]);
 
   // ---- on submit, require password if encryption requested ----
   const onSubmit = (data: FormData) => {
