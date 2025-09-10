@@ -10,11 +10,10 @@ import { VirusTotalService } from "./services/virustotal";
 import crypto from "crypto";
 import cors from "cors";
 import { authMiddleware } from "./middleware/auth";
-
 import { insertPasteSchema } from "@shared/schema";
 import { z } from "zod";
 
-/** Middleware that requires an authenticated user (attaches req.user via auth setup) */
+/** Auth helper middleware */
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user?.id) {
     return res.status(401).json({ message: "Authentication required" });
@@ -22,14 +21,14 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-/** Extract ALL URLs, normalize a bit, and dedupe */
+/** Extract all http(s) URLs and dedupe */
 function extractAllUrls(text: string): string[] {
   const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
   const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
   return Array.from(new Set(cleaned));
 }
 
-/** Extract bare domains (not starting with http(s)://), dedupe, and remove those already covered by URLs */
+/** Extract bare domains (not starting with http(s)://) and dedupe */
 function extractDomains(text: string, urls: string[]): string[] {
   const DOMAIN_REGEX =
     /\b(?!(?:https?:\/\/))([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b/gi;
@@ -39,7 +38,7 @@ function extractDomains(text: string, urls: string[]): string[] {
   return unique.filter((d) => !urls.some((u) => u.includes(d)));
 }
 
-/** Get the client's IP address from the request. */
+/** Get client IP with X-Forwarded-For fallback */
 function getClientIP(req: Request): string {
   const xf = req.headers["x-forwarded-for"];
   if (xf && typeof xf === "string" && xf.trim().length > 0) {
@@ -55,13 +54,11 @@ function getClientIP(req: Request): string {
 }
 
 export function registerRoutes(app: Express): Server {
-  // Setup auth (populates req.user if session/token valid)
   setupAuth(app);
 
-  // If behind proxy (Vercel, Cloudflare), trust x-forwarded-for for req.ip
   app.set("trust proxy", true);
 
-  // Single request debug logger (remove in production)
+  // temporary request debug logging (remove later)
   app.use((req, res, next) => {
     console.log("[REQ-DBG]", {
       method: req.method,
@@ -74,7 +71,7 @@ export function registerRoutes(app: Express): Server {
     next();
   });
 
-  // CORS for allowed origins
+  // CORS for known origins (allow vercel subdomains)
   app.use(
     cors({
       origin: (origin, callback) => {
@@ -96,18 +93,12 @@ export function registerRoutes(app: Express): Server {
     })
   );
 
-  // Allow preflight on API routes
-  app.options("/api/*", cors());
-
-  // Apply auth middleware to /api routes
-  app.use("/api", authMiddleware);
-
-  /* ------------------- View recording endpoint ------------------- */
+  // view endpoint (client calls on mount)
   app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
 
-      // Best-effort: create an access log
+      // best-effort insert access log (don't block)
       try {
         const log = await storage.createAccessLog({
           pasteId: id,
@@ -119,7 +110,7 @@ export function registerRoutes(app: Express): Server {
         console.error("[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed", err);
       }
 
-      // Best-effort: increment views
+      // best-effort increment viewCount
       try {
         await storage.incrementPasteViews(id);
       } catch (err) {
@@ -133,12 +124,18 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // allow preflight
+  app.options("/api/*", cors());
+
+  // apply auth middleware to /api
+  app.use("/api", authMiddleware);
+
   /* --------------------------- Create paste --------------------------- */
   app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => {
     try {
       const pasteData = insertPasteSchema.parse(req.body);
 
-      // Handle encryption: store encrypted content, never persist plain password
+      // encryption
       let content = pasteData.content;
       let password = pasteData.password;
       if (pasteData.encrypted && password) {
@@ -146,12 +143,11 @@ export function registerRoutes(app: Express): Server {
         password = undefined;
       }
 
-      // Local scan for sensitive data and heuristics (always run)
+      // local scan + extract urls/domains
       const local = malwareScanner.scan(pasteData.content);
       const urls = extractAllUrls(pasteData.content);
       const domains = extractDomains(pasteData.content, urls);
 
-      // Remove URL-only local notices (VirusTotal decides URL risk)
       const filteredLocalThreats = Array.isArray(local.threats)
         ? local.threats.filter((t: string) => !/^\s*URL\b/i.test(t))
         : [];
@@ -171,7 +167,7 @@ export function registerRoutes(app: Express): Server {
         });
       }
 
-      // VirusTotal scanning (optional; only if key exists - either user setting or env)
+      // VirusTotal scanning (user key preferred, fallback to env)
       const MAX_URLS_TO_SCAN = 5;
       type VtPerUrl = {
         url: string;
@@ -184,8 +180,10 @@ export function registerRoutes(app: Express): Server {
         scanDate?: string;
         error?: string;
       };
+
       const vtResults: VtPerUrl[] = [];
       const vtThreatLabels: string[] = [];
+      console.log("[VT] urls:", urls);
 
       try {
         const settings = await storage.getUserSettings(req.user!.id);
@@ -203,11 +201,11 @@ export function registerRoutes(app: Express): Server {
         const apiKeyEnv = (process.env.VIRUSTOTAL_API_KEY || "").trim();
         const apiKey = (apiKeyFromSettings?.trim() || "") || apiKeyEnv;
         const vtConfigured = Boolean(apiKey);
+        console.log("[VT] vtConfigured?", vtConfigured);
 
         if (vtConfigured && (urls.length > 0 || domains.length > 0)) {
           const vtService = new VirusTotalService();
 
-          // scan domains (first)
           const MAX_DOMAINS_TO_SCAN = 5;
           for (const d of domains.slice(0, MAX_DOMAINS_TO_SCAN)) {
             try {
@@ -227,7 +225,6 @@ export function registerRoutes(app: Express): Server {
             );
           }
 
-          // scan urls
           for (const url of urls.slice(0, MAX_URLS_TO_SCAN)) {
             try {
               const resVt = await vtService.scanUrl(url, apiKey, {
@@ -270,7 +267,7 @@ export function registerRoutes(app: Express): Server {
         if (urls.length > 0) infoNotes.push("VirusTotal scanning error; URL risk unknown.");
       }
 
-      // combine signals
+      // combine threats
       const hasSensitive = (local.sensitiveData?.length ?? 0) > 0;
       const combinedThreats = [...filteredLocalThreats, ...vtThreatLabels];
       const hasThreats = combinedThreats.length > 0;
@@ -424,6 +421,7 @@ export function registerRoutes(app: Express): Server {
   app.get("/api/settings", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
+
       let settings = await storage.getUserSettings(userId);
       if (!settings) {
         settings = await storage.createUserSettings({
@@ -446,6 +444,7 @@ export function registerRoutes(app: Express): Server {
   app.put("/api/settings", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
+
       const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
       const updates: any = { userId };
 
@@ -458,8 +457,14 @@ export function registerRoutes(app: Express): Server {
 
       if (req.body.clearVirusTotalKey === true) {
         updates.virusTotalApiKey = null;
-      } else if (typeof req.body.virusTotalApiKey === "string" && req.body.virusTotalApiKey.trim().length > 0) {
-        updates.virusTotalApiKey = encryptionService.encryptApiKey(req.body.virusTotalApiKey.trim(), masterKey);
+      } else if (
+        typeof req.body.virusTotalApiKey === "string" &&
+        req.body.virusTotalApiKey.trim().length > 0
+      ) {
+        updates.virusTotalApiKey = encryptionService.encryptApiKey(
+          req.body.virusTotalApiKey.trim(),
+          masterKey
+        );
       }
 
       const PartialSettings = z.object({
@@ -490,18 +495,16 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  /* ---------------------------- Scan helper used by client for preview ---------------------------- */
+  /* ---------------------------- Scan (endpoint used by client) ---------------------------- */
   app.post("/api/scan", async (req: Request, res: Response) => {
     try {
       const { content } = z.object({ content: z.string() }).parse(req.body);
 
-      // Local scan (always run)
       const local = malwareScanner.scan(content);
       const urls = extractAllUrls(content);
       const domains = extractDomains(content, urls);
-
-      // Get VT key preference: user's stored key preferred (if authenticated), otherwise env
       let vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
+
       try {
         if (req.user?.id) {
           const settings = await storage.getUserSettings(req.user.id);
@@ -577,7 +580,7 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  /* ----------------------------- Shareable links ----------------------------- */
+  /* ----------------------------- Shareable links & other routes ----------------------------- */
   app.post("/api/pastes/:id/share", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -615,6 +618,7 @@ export function registerRoutes(app: Express): Server {
       if (!link) return res.status(404).json({ message: "Link not found" });
 
       if (link.expiresAt && link.expiresAt < new Date()) return res.status(404).json({ message: "Link has expired" });
+
       if (link.maxUsage && (link.usageCount || 0) >= link.maxUsage) return res.status(404).json({ message: "Link usage limit exceeded" });
 
       const paste = await storage.getPaste(link.pasteId);
@@ -624,7 +628,9 @@ export function registerRoutes(app: Express): Server {
 
       let content = paste.content;
       if (paste.encrypted) {
-        if (!password) return res.status(401).json({ message: "Password required for encrypted paste" });
+        if (!password) {
+          return res.status(401).json({ message: "Password required for encrypted paste" });
+        }
         try {
           content = encryptionService.decrypt(paste.content, String(password));
         } catch {
