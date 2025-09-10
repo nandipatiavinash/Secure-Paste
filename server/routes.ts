@@ -662,16 +662,6 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       const paste = await storage.getPaste(link.pasteId);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
 
-      try {
-        const log = await storage.createAccessLog({
-          pasteId: link.pasteId,
-          viewerIp: getClientIP(req),
-          userAgent: req.get("User-Agent") || "",
-        });
-        console.log('[ACCESS-LOG-INSERTED]', { pasteId: link.pasteId, logId: log?.id ?? null });
-      } catch (err) {
-        console.error('[ACCESS-LOG-ERROR] createAccessLog (share) failed', err);
-      }
       await storage.incrementLinkUsage(token);
 
       let content = paste.content;
