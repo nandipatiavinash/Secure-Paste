@@ -1,4 +1,5 @@
-import { useState } from "react";
+// client/src/components/create-paste-form.tsx
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -27,6 +28,9 @@ interface ScanResult {
   clean: boolean;
   threats: string[];
   sensitiveData: string[];
+  urls?: string[];
+  vtResults?: any[];
+  info?: string[];
 }
 
 interface CreatePasteResponse {
@@ -55,13 +59,53 @@ export function CreatePasteForm() {
     },
   });
 
+  // ---- client side credential/password heuristics ----
+  function detectCredentials(content: string): string[] {
+    const findings: string[] = [];
+    if (!content) return findings;
+
+    const patterns: { name: string; re: RegExp }[] = [
+      { name: "Basic auth (user:pass)", re: /\b[a-zA-Z0-9._%+-]+:[^\s]{4,}\b/ },
+      { name: "password= or pwd=", re: /\b(password|pwd)\s*[:=]\s*[^,\s]{4,}/i },
+      { name: "AWS Access Key ID", re: /\bAKI[0-9A-Z]{16}\b/ },
+      { name: "Private key (BEGIN RSA PRIVATE KEY)", re: /-----BEGIN (RSA |)?PRIVATE KEY-----/i },
+      { name: "SSH private key", re: /-----BEGIN OPENSSH PRIVATE KEY-----/i },
+      { name: "Google API key-like", re: /AIza[0-9A-Za-z-_]{35}/ },
+      { name: "JWT-like token", re: /\beyJ[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b/ },
+    ];
+
+    for (const p of patterns) {
+      if (p.re.test(content)) findings.push(p.name);
+    }
+
+    return findings;
+  }
+
+  // ---- helper to extract URLs (simple) ----
+  function extractAllUrls(text: string): string[] {
+    const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
+    const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
+    return Array.from(new Set(cleaned));
+  }
+
+  // ---- scan mutation (calls your server /api/scan which runs VT + local heuristics) ----
   const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
       return await res.json();
     },
-    onSuccess: (result: ScanResult) => {
-      setScanResult(result);
+    onSuccess: (result: any) => {
+      // result shape from server: { clean, threats, sensitiveData, info, urls, vtResults }
+      const clientFindings = detectCredentials(form.getValues("content"));
+      const mergedSensitive = Array.from(new Set([...(result.sensitiveData || []), ...clientFindings]));
+      setScanResult({
+        clean: result.clean && mergedSensitive.length === 0,
+        threats: result.threats || [],
+        sensitiveData: mergedSensitive,
+        urls: result.urls || [],
+        vtResults: result.vtResults || [],
+        info: result.info || [],
+      });
     },
     onError: () => {
       toast({
@@ -72,6 +116,7 @@ export function CreatePasteForm() {
     },
   });
 
+  // ---- create mutation ----
   const createMutation = useMutation({
     mutationFn: async (data: FormData) => {
       const res = await apiRequest("POST", "/api/pastes", data);
@@ -84,15 +129,17 @@ export function CreatePasteForm() {
       });
       setLocation(`/paste/${result.id}/success`);
     },
-    onError: () => {
+    onError: (err: any) => {
+      const msg = err?.message || "Please try again.";
       toast({
         title: "Failed to create paste",
-        description: "Please try again.",
+        description: msg,
         variant: "destructive",
       });
     },
   });
 
+  // ---- manual scan triggered by button ----
   const handleScan = () => {
     const content = form.getValues("content");
     if (!content.trim()) {
@@ -106,6 +153,47 @@ export function CreatePasteForm() {
     scanMutation.mutate(content);
   };
 
+  // ---- auto-scan on content change (debounced) ----
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const content = form.getValues("content") || "";
+    // clear previous
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    // if empty, clear scan result
+    if (!content.trim()) {
+      setScanResult(null);
+      return;
+    }
+
+    // quick client-side detection immediately (credentials etc)
+    const clientFindings = detectCredentials(content);
+    if (clientFindings.length > 0) {
+      // show immediate feedback while server VT/more thorough scan runs
+      setScanResult((prev) => ({
+        clean: false,
+        threats: prev?.threats ?? [],
+        sensitiveData: clientFindings,
+      }));
+    }
+
+    // debounce server scan (VT) to avoid excessive calls while typing
+    debounceRef.current = window.setTimeout(() => {
+      scanMutation.mutate(content);
+    }, 700); // 700ms debounce
+
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.watch("content")]); // watch content
+
+  // ---- on submit, require password if encryption requested ----
   const onSubmit = (data: FormData) => {
     if (data.encrypted && !data.password) {
       toast({
@@ -115,6 +203,15 @@ export function CreatePasteForm() {
       });
       return;
     }
+
+    // Optional: if scanResult indicates issues, warn user before submit
+    if (scanResult && (!scanResult.clean || (scanResult.sensitiveData && scanResult.sensitiveData.length > 0))) {
+      const proceed = window.confirm(
+        `Security scan flagged possible issues (${(scanResult.threats?.length || 0) + (scanResult.sensitiveData?.length || 0)}). Are you sure you want to create the paste?`
+      );
+      if (!proceed) return;
+    }
+
     createMutation.mutate(data);
   };
 
@@ -127,7 +224,7 @@ export function CreatePasteForm() {
           <h2 className="text-3xl font-bold text-slate-900 mb-4">Create Secure Paste</h2>
           <p className="text-lg text-slate-600">Share your code or text with advanced security options</p>
         </div>
-        
+
         <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -153,7 +250,7 @@ export function CreatePasteForm() {
                     <FormLabel>Content</FormLabel>
                     <FormControl>
                       <div className="relative">
-                        <Textarea 
+                        <Textarea
                           placeholder="Paste your code or text here..."
                           className="h-64 font-mono text-sm resize-none"
                           {...field}
@@ -178,8 +275,8 @@ export function CreatePasteForm() {
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-center space-x-2 space-y-0">
                           <FormControl>
-                            <Checkbox 
-                              checked={field.value || false} 
+                            <Checkbox
+                              checked={field.value || false}
                               onCheckedChange={(checked) => {
                                 field.onChange(checked);
                                 setShowPassword(!!checked);
@@ -190,17 +287,14 @@ export function CreatePasteForm() {
                         </FormItem>
                       )}
                     />
-                    
+
                     <FormField
                       control={form.control}
                       name="selfDestruct"
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-center space-x-2 space-y-0">
                           <FormControl>
-                            <Checkbox 
-                              checked={field.value || false} 
-                              onCheckedChange={field.onChange}
-                            />
+                            <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                           </FormControl>
                           <FormLabel className="text-sm text-slate-700">Self-destruct after first view</FormLabel>
                         </FormItem>
@@ -243,12 +337,7 @@ export function CreatePasteForm() {
                     <FormItem>
                       <FormLabel>Encryption Password</FormLabel>
                       <FormControl>
-                        <Input 
-                          type="password" 
-                          placeholder="Enter strong password for encryption"
-                          {...field}
-                          value={field.value || ""}
-                        />
+                        <Input type="password" placeholder="Enter strong password for encryption" {...field} value={field.value || ""} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -286,6 +375,7 @@ export function CreatePasteForm() {
                 )}
               />
 
+              {/* Scan results */}
               {scanResult && (
                 <Alert className={scanResult.clean ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}>
                   <div className="flex items-center space-x-2">
@@ -294,34 +384,39 @@ export function CreatePasteForm() {
                     ) : (
                       <AlertTriangle className="h-4 w-4 text-amber-500" />
                     )}
-                    <span className={`font-medium ${scanResult.clean ? 'text-green-700' : 'text-amber-700'}`}>
-                      Security scan {scanResult.clean ? 'passed' : 'flagged content'}
+                    <span className={`font-medium ${scanResult.clean ? "text-green-700" : "text-amber-700"}`}>
+                      Security scan {scanResult.clean ? "passed" : "flagged content"}
                     </span>
                   </div>
-                  <AlertDescription className={scanResult.clean ? 'text-green-600' : 'text-amber-600'}>
-                    {scanResult.clean 
-                      ? "No malicious content or sensitive data patterns detected."
-                      : `Found ${scanResult.threats.length + scanResult.sensitiveData.length} potential issues.`
-                    }
+
+                  <AlertDescription className={scanResult.clean ? "text-green-600" : "text-amber-600"}>
+                    {scanResult.clean ? (
+                      "No malicious content or sensitive data patterns detected."
+                    ) : (
+                      <>
+                        <div>
+                          {scanResult.threats?.length ? (
+                            <div><strong>Threats:</strong> {scanResult.threats.join(", ")}</div>
+                          ) : null}
+                          {scanResult.sensitiveData?.length ? (
+                            <div><strong>Sensitive matches:</strong> {scanResult.sensitiveData.join(", ")}</div>
+                          ) : null}
+                          {scanResult.urls?.length ? (
+                            <div><strong>Found URLs:</strong> {scanResult.urls.join(", ")}</div>
+                          ) : null}
+                        </div>
+                      </>
+                    )}
                   </AlertDescription>
                 </Alert>
               )}
 
               <div className="flex flex-col sm:flex-row gap-3">
-                <Button 
-                  type="submit"
-                  className="flex-1"
-                  disabled={createMutation.isPending}
-                >
+                <Button type="submit" className="flex-1" disabled={createMutation.isPending}>
                   <Shield className="w-4 h-4 mr-2" />
                   {createMutation.isPending ? "Creating..." : "Create Secure Paste"}
                 </Button>
-                <Button 
-                  type="button"
-                  variant="outline"
-                  onClick={handleScan}
-                  disabled={scanMutation.isPending}
-                >
+                <Button type="button" variant="outline" onClick={handleScan} disabled={scanMutation.isPending}>
                   <Search className="w-4 h-4 mr-2" />
                   {scanMutation.isPending ? "Scanning..." : "Scan First"}
                 </Button>
