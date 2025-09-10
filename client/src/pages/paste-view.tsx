@@ -107,6 +107,22 @@ export default function PasteView() {
       }
     }
   }, [error, toast]);
+  useEffect(() => {
+    if (!pasteId) return;
+
+    // Fire-and-forget; server will best-effort record the view
+    fetch(`${API_URL}/api/pastes/${pasteId}/view`, {
+      method: "POST",
+      credentials: "include",
+    })
+      .then((res) => {
+        if (!res.ok) console.warn(`[view endpoint] non-OK status: ${res.status}`);
+        else console.debug("[view endpoint] success", pasteId);
+      })
+      .catch((err) => {
+        console.warn("[view endpoint] failed", err);
+      });
+  }, [pasteId]);
 
   const handlePasswordSubmit = () => {
     if (password.trim()) {
