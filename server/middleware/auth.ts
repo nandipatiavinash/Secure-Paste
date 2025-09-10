@@ -7,7 +7,7 @@ export interface AuthPayload { sub: string; email?: string; iat?: number; exp?: 
 const JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 if (!JWT_SECRET) console.warn("SUPABASE_JWT_SECRET not set; tokens won't be verified");
 
-export function authMiddleware(req: Request, _res: Response, next: NextFunction) {
+export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) return next();
   const token = auth.split(" ")[1];
@@ -15,10 +15,11 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
 
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    // attach minimal user info
     req.user = { id: payload.sub, email: payload.email };
+    return next();
   } catch (err) {
-    // invalid token - treat as anonymous; or return 401 if you prefer
-    // return res.status(401).json({ error: 'Invalid token' });
+    // Treat invalid/expired tokens as unauthorized instead of silently anonymous.
+    return res.status(401).json({ error: "Invalid or expired token" });
   }
-  return next();
 }
