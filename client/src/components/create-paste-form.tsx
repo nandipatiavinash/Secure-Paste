@@ -59,28 +59,32 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- client side credential/password heuristics ----
-  function detectCredentials(content: string): string[] {
-    const findings: string[] = [];
-    if (!content) return findings;
-
-    const patterns: { name: string; re: RegExp }[] = [
-      { name: "Basic auth (user:pass)", re: /\b[a-zA-Z0-9._%+-]+:[^\s]{4,}\b/ },
-      { name: "password= or pwd=", re: /\b(password|pwd)\s*[:=]\s*[^,\s]{4,}/i },
-      { name: "AWS Access Key ID", re: /\bAKI[0-9A-Z]{16}\b/ },
-      { name: "Private key (BEGIN RSA PRIVATE KEY)", re: /-----BEGIN (RSA |)?PRIVATE KEY-----/i },
-      { name: "SSH private key", re: /-----BEGIN OPENSSH PRIVATE KEY-----/i },
-      { name: "Google API key-like", re: /AIza[0-9A-Za-z-_]{35}/ },
-      { name: "JWT-like token", re: /\beyJ[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b/ },
-    ];
-
-    for (const p of patterns) {
-      if (p.re.test(content)) findings.push(p.name);
-    }
-
-    return findings;
+  // ---- auto-scan on content change (debounced) ----
+const debounceRef = useRef<number | null>(null);
+useEffect(() => {
+  const content = form.getValues("content") || "";
+  if (debounceRef.current) {
+    window.clearTimeout(debounceRef.current);
+    debounceRef.current = null;
+  }
+  if (!content.trim()) {
+    setScanResult(null);
+    return;
   }
 
+  // Debounce server scan to avoid excessive calls while typing
+  debounceRef.current = window.setTimeout(() => {
+    scanMutation.mutate(content);
+  }, 700); // 700ms debounce
+
+  return () => {
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [form.watch("content")]); // watch content
   // ---- helper to extract URLs (simple) ----
   function extractAllUrls(text: string): string[] {
     const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
