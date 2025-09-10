@@ -1,5 +1,6 @@
+// server/routes.ts
 import type { Express } from "express";
-import { Request, Response, NextFunction } from "express"; // 👈 Add Request, Response, NextFunction
+import { Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
@@ -9,20 +10,13 @@ import { VirusTotalService } from "./services/virustotal";
 import crypto from "crypto";
 import cors from "cors";
 import { authMiddleware } from "./middleware/auth";
-//import signupRouter from "./routes/signup"; 
 
-import {
-  insertPasteSchema,
-} from "@shared/schema";
+import { insertPasteSchema } from "@shared/schema";
 import { z } from "zod";
 
-/**
- * Ensures the request is authenticated by checking for a user on the request object.
- * This middleware should be applied to routes that require a logged-in user.
- */
+/** Middleware that requires an authenticated user (attaches req.user via auth setup) */
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  // 👈 Use correct Express types
-  if (!req.user?.id) { // 👈 Check for req.user?.id instead of req.isAuthenticated()
+  if (!req.user?.id) {
     return res.status(401).json({ message: "Authentication required" });
   }
   next();
@@ -37,25 +31,23 @@ function extractAllUrls(text: string): string[] {
 
 /** Extract bare domains (not starting with http(s)://), dedupe, and remove those already covered by URLs */
 function extractDomains(text: string, urls: string[]): string[] {
-  const DOMAIN_REGEX = /\b(?!(?:https?:\/\/))([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b/gi;
+  const DOMAIN_REGEX =
+    /\b(?!(?:https?:\/\/))([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b/gi;
   const raw = text.match(DOMAIN_REGEX) || [];
   const cleaned = raw.map((d) => d.trim().toLowerCase().replace(/\.$/, ""));
   const unique = Array.from(new Set(cleaned));
-  // avoid duplicating effort if the domain is already inside a matched URL
   return unique.filter((d) => !urls.some((u) => u.includes(d)));
 }
 
 /** Get the client's IP address from the request. */
 function getClientIP(req: Request): string {
-  const xf = req.headers['x-forwarded-for'];
-  if (xf && typeof xf === 'string' && xf.trim().length > 0) {
-    // x-forwarded-for can be comma-separated; use first ip
-    return xf.split(',')[0].trim();
+  const xf = req.headers["x-forwarded-for"];
+  if (xf && typeof xf === "string" && xf.trim().length > 0) {
+    return xf.split(",")[0].trim();
   }
-  // fallback chain
   return (
     req.ip ||
-    // @ts-ignore - some types don't include connection.remoteAddress
+    // @ts-ignore
     (req.connection && (req.connection as any).remoteAddress) ||
     (req.socket && (req.socket as any).remoteAddress) ||
     "0.0.0.0"
@@ -63,38 +55,26 @@ function getClientIP(req: Request): string {
 }
 
 export function registerRoutes(app: Express): Server {
-setupAuth(app);
+  // Setup auth (populates req.user if session/token valid)
+  setupAuth(app);
 
-  // If this server sits behind a proxy (Vercel, Cloudflare, etc.), enable this so Express
-  // will use x-forwarded-for for req.ip. Only enable for trusted deployments.
-  app.set('trust proxy', true);
+  // If behind proxy (Vercel, Cloudflare), trust x-forwarded-for for req.ip
+  app.set("trust proxy", true);
 
-  // TEMP DEBUG: log all incoming requests (remove once solved)
+  // Single request debug logger (remove in production)
   app.use((req, res, next) => {
-    console.log('[REQ-DBG]', {
+    console.log("[REQ-DBG]", {
       method: req.method,
       url: req.originalUrl,
-      xff: req.headers['x-forwarded-for'],
+      xff: req.headers["x-forwarded-for"],
       ip: req.ip,
       sockRemote: req.socket && (req.socket.remoteAddress || null),
-      ua: req.get('User-Agent'),
+      ua: req.get("User-Agent"),
     });
     next();
   });
-    // DEBUG: temporary request logging — remove when done
-  app.use((req, res, next) => {
-    console.log('[REQ-DBG]', {
-      method: req.method,
-      url: req.originalUrl,
-      // show proxied header explicitly
-      xff: req.headers['x-forwarded-for'],
-      ip: req.ip,
-      sockRemote: req.socket && (req.socket.remoteAddress || null),
-      ua: req.get('User-Agent'),
-    });
-    next();
-  });
-  // 1) CORS first so preflight (OPTIONS) works without auth
+
+  // CORS for allowed origins
   app.use(
     cors({
       origin: (origin, callback) => {
@@ -104,7 +84,6 @@ setupAuth(app);
           "https://secure-paste-six.vercel.app",
         ];
         const vercelPattern = /\.vercel\.app$/;
-
         if (!origin || allowedOrigins.includes(origin) || vercelPattern.test(origin)) {
           callback(null, true);
         } else {
@@ -116,247 +95,236 @@ setupAuth(app);
       credentials: true,
     })
   );
-  /* ------------------- Explicit view endpoint (client calls on mount) ------------------- */
-  app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
 
-    // attempt to insert one access log (best-effort, don't block)
-    try {
-      const log = await storage.createAccessLog({
-        pasteId: id,
-        viewerIp: getClientIP(req),
-        userAgent: req.get("User-Agent") || "",
-      });
-      console.log('[VIEW-ENDPOINT-LOGGED]', { pasteId: id, logId: log?.id ?? null });
-    } catch (err) {
-      console.error('[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed', err);
-    }
-
-    // increment paste viewCount (best-effort)
-    try {
-      await storage.incrementPasteViews(id);
-    } catch (err) {
-      console.error('[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed', err);
-    }
-
-    return res.status(204).send();
-  } catch (err) {
-    console.error('[VIEW-ENDPOINT] unexpected error', err);
-    return res.status(500).json({ message: "Failed to record view" });
-  }
-});
-
-  
-  // allow preflight on API routes
+  // Allow preflight on API routes
   app.options("/api/*", cors());
 
-  // 2) Apply auth middleware to /api routes only
+  // Apply auth middleware to /api routes
   app.use("/api", authMiddleware);
 
-    // 👈 Mount the new signup router
-  //app.use("/auth", signupRouter);
+  /* ------------------- View recording endpoint ------------------- */
+  app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
 
- /* --------------------------- Create paste --------------------------- */
-app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { // 👈 Use requireAuth and proper types
-  try {
-    const pasteData = insertPasteSchema.parse(req.body);
-
-    // Handle encryption (never store raw password)
-    let content = pasteData.content;
-    let password = pasteData.password;
-    if (pasteData.encrypted && password) {
-      content = encryptionService.encrypt(pasteData.content, password);
-      password = undefined;
-    }
-
-    // Local scan (PII/malware heuristics; URLs handled by VT below)
-    const local = malwareScanner.scan(pasteData.content);
-    const urls = extractAllUrls(pasteData.content);
-    const domains = extractDomains(pasteData.content, urls);
-
-    // Filter out URL-only notices from local scan; VT decides URL risk
-    const filteredLocalThreats = Array.isArray(local.threats)
-      ? local.threats.filter((t: string) => !/^\s*URL\b/i.test(t))
-      : [];
-
-    // Info notes (non-blocking hints)
-    const infoNotes: string[] = urls.length
-      ? [`${urls.length} URL${urls.length > 1 ? "s" : ""} detected in content`]
-      : [];
-
-    // Respect `force` to override blocking on findings
-    const force = Boolean((req.body as any)?.force ?? false); // 👈 Use 'as any' for force property
-    if ((local.sensitiveData?.length || filteredLocalThreats.length) && !force) {
-      return res.status(422).json({
-        message: "Sensitive or potentially unsafe content detected",
-        sensitiveData: local.sensitiveData,
-        threats: filteredLocalThreats,
-        urls,
-        hint: "Resubmit with { force: true } to proceed anyway.",
-      });
-    }
-
-    // ---------- Optional VirusTotal scan for ALL URLs ----------
-    const MAX_URLS_TO_SCAN = 5;
-
-    type VtPerUrl = {
-      url: string;
-      malicious: boolean;
-      suspicious: boolean;
-      clean: boolean;
-      positives?: number;
-      total?: number;
-      detections?: string[];
-      scanDate?: string;
-      error?: string;
-    };
-
-    const vtResults: VtPerUrl[] = [];
-    const vtThreatLabels: string[] = [];
-    console.log("[VT] urls:", urls);
-
-       try {
-      // 👈 Use non-null assertion as requireAuth guarantees existence
-      const settings = await storage.getUserSettings(req.user!.id);
-      const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
-
-      let apiKeyFromSettings: string | null = null;
-      if (settings?.virusTotalApiKey) {
-        try {
-          apiKeyFromSettings = encryptionService.decryptApiKey(settings.virusTotalApiKey, masterKey);
-        } catch (e) {
-          console.warn("VirusTotal key decryption failed; will try env fallback.", e);
-        }
+      // Best-effort: create an access log
+      try {
+        const log = await storage.createAccessLog({
+          pasteId: id,
+          viewerIp: getClientIP(req),
+          userAgent: req.get("User-Agent") || "",
+        });
+        console.log("[VIEW-ENDPOINT-LOGGED]", { pasteId: id, logId: log?.id ?? null });
+      } catch (err) {
+        console.error("[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed", err);
       }
 
-      const apiKeyEnv = (process.env.VIRUSTOTAL_API_KEY || "").trim();
-      const apiKey = (apiKeyFromSettings?.trim() || "") || apiKeyEnv;
-      const vtConfigured = Boolean(apiKey);
-      console.log("[VT] urls:", urls, "vtConfigured?", vtConfigured);
+      // Best-effort: increment views
+      try {
+        await storage.incrementPasteViews(id);
+      } catch (err) {
+        console.error("[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed", err);
+      }
 
-      if (vtConfigured && (urls.length > 0 || domains.length > 0)) {
-        const vtService = new VirusTotalService();
+      return res.status(204).send();
+    } catch (err) {
+      console.error("[VIEW-ENDPOINT] unexpected error", err);
+      return res.status(500).json({ message: "Failed to record view" });
+    }
+  });
 
-        // 1) Scan DOMAINS first (VT UI “12/94 vendors flagged this domain” comes from the domain object)
-        const MAX_DOMAINS_TO_SCAN = 5;
-        for (const d of domains.slice(0, MAX_DOMAINS_TO_SCAN)) {
+  /* --------------------------- Create paste --------------------------- */
+  app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const pasteData = insertPasteSchema.parse(req.body);
+
+      // Handle encryption: store encrypted content, never persist plain password
+      let content = pasteData.content;
+      let password = pasteData.password;
+      if (pasteData.encrypted && password) {
+        content = encryptionService.encrypt(pasteData.content, password);
+        password = undefined;
+      }
+
+      // Local scan for sensitive data and heuristics (always run)
+      const local = malwareScanner.scan(pasteData.content);
+      const urls = extractAllUrls(pasteData.content);
+      const domains = extractDomains(pasteData.content, urls);
+
+      // Remove URL-only local notices (VirusTotal decides URL risk)
+      const filteredLocalThreats = Array.isArray(local.threats)
+        ? local.threats.filter((t: string) => !/^\s*URL\b/i.test(t))
+        : [];
+
+      const infoNotes: string[] = urls.length
+        ? [`${urls.length} URL${urls.length > 1 ? "s" : ""} detected in content`]
+        : [];
+
+      const force = Boolean((req.body as any)?.force ?? false);
+      if ((local.sensitiveData?.length || filteredLocalThreats.length) && !force) {
+        return res.status(422).json({
+          message: "Sensitive or potentially unsafe content detected",
+          sensitiveData: local.sensitiveData,
+          threats: filteredLocalThreats,
+          urls,
+          hint: "Resubmit with { force: true } to proceed anyway.",
+        });
+      }
+
+      // VirusTotal scanning (optional; only if key exists - either user setting or env)
+      const MAX_URLS_TO_SCAN = 5;
+      type VtPerUrl = {
+        url: string;
+        malicious: boolean;
+        suspicious: boolean;
+        clean: boolean;
+        positives?: number;
+        total?: number;
+        detections?: string[];
+        scanDate?: string;
+        error?: string;
+      };
+      const vtResults: VtPerUrl[] = [];
+      const vtThreatLabels: string[] = [];
+
+      try {
+        const settings = await storage.getUserSettings(req.user!.id);
+        const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
+
+        let apiKeyFromSettings: string | null = null;
+        if (settings?.virusTotalApiKey) {
           try {
-            const r = await vtService.scanDomain(d, apiKey); // <-- new method (see Step 3)
-            if (r.malicious) {
-              vtThreatLabels.push(`VirusTotal: malicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
-            } else if (r.suspicious) {
-              vtThreatLabels.push(`VirusTotal: suspicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
+            apiKeyFromSettings = encryptionService.decryptApiKey(settings.virusTotalApiKey, masterKey);
+          } catch (e) {
+            console.warn("VirusTotal key decryption failed; will try env fallback.", e);
+          }
+        }
+
+        const apiKeyEnv = (process.env.VIRUSTOTAL_API_KEY || "").trim();
+        const apiKey = (apiKeyFromSettings?.trim() || "") || apiKeyEnv;
+        const vtConfigured = Boolean(apiKey);
+
+        if (vtConfigured && (urls.length > 0 || domains.length > 0)) {
+          const vtService = new VirusTotalService();
+
+          // scan domains (first)
+          const MAX_DOMAINS_TO_SCAN = 5;
+          for (const d of domains.slice(0, MAX_DOMAINS_TO_SCAN)) {
+            try {
+              const r = await vtService.scanDomain(d, apiKey);
+              if (r.malicious) {
+                vtThreatLabels.push(`VirusTotal: malicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
+              } else if (r.suspicious) {
+                vtThreatLabels.push(`VirusTotal: suspicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
+              }
+            } catch (e: any) {
+              infoNotes.push(`VirusTotal scan failed for domain ${d}`);
             }
-          } catch (e: any) {
-            infoNotes.push(`VirusTotal scan failed for domain ${d}`);
           }
-        }
-        if (domains.length > MAX_DOMAINS_TO_SCAN) {
-          infoNotes.push(
-            `Scanned only first ${MAX_DOMAINS_TO_SCAN} domain(s) due to rate limits; ${domains.length - MAX_DOMAINS_TO_SCAN} left unscanned.`
-          );
-        }
-
-        // 2) Scan URLs (unchanged logic, keeps your vtResults array for URLs)
-        for (const url of urls.slice(0, MAX_URLS_TO_SCAN)) {
-          try {
-            const resVt = await vtService.scanUrl(url, apiKey, {
-              overallTimeoutMs: 12000,
-              perRequestTimeoutMs: 5000,
-              pollIntervalMs: 1000,
-            });
-            const clean = resVt.malicious === false && resVt.suspicious === false;
-
-            vtResults.push({
-              url,
-              malicious: !!resVt.malicious,
-              suspicious: !!resVt.suspicious,
-              clean,
-              positives: resVt.positives,
-              total: resVt.total,
-              detections: resVt.detections,
-              scanDate: resVt.scanDate,
-            });
-
-            if (resVt.malicious) vtThreatLabels.push(`VirusTotal: malicious URL (${url})`);
-            else if (resVt.suspicious) vtThreatLabels.push(`VirusTotal: suspicious URL (${url})`);
-          } catch (scanErr) {
-            vtResults.push({ url, malicious: false, suspicious: false, clean: false, error: "VirusTotal scan failed" });
-            infoNotes.push(`VirusTotal scan failed for ${url}`);
+          if (domains.length > MAX_DOMAINS_TO_SCAN) {
+            infoNotes.push(
+              `Scanned only first ${MAX_DOMAINS_TO_SCAN} domain(s) due to rate limits; ${domains.length - MAX_DOMAINS_TO_SCAN} left unscanned.`
+            );
           }
-        }
 
-        if (urls.length > MAX_URLS_TO_SCAN) {
-          infoNotes.push(
-            `Scanned only first ${MAX_URLS_TO_SCAN} URL(s) due to rate limits; ${urls.length - MAX_URLS_TO_SCAN} left unscanned.`
-          );
+          // scan urls
+          for (const url of urls.slice(0, MAX_URLS_TO_SCAN)) {
+            try {
+              const resVt = await vtService.scanUrl(url, apiKey, {
+                overallTimeoutMs: 12000,
+                perRequestTimeoutMs: 5000,
+                pollIntervalMs: 1000,
+              });
+              const clean = resVt.malicious === false && resVt.suspicious === false;
+
+              vtResults.push({
+                url,
+                malicious: !!resVt.malicious,
+                suspicious: !!resVt.suspicious,
+                clean,
+                positives: resVt.positives,
+                total: resVt.total,
+                detections: resVt.detections,
+                scanDate: resVt.scanDate,
+              });
+
+              if (resVt.malicious) vtThreatLabels.push(`VirusTotal: malicious URL (${url})`);
+              else if (resVt.suspicious) vtThreatLabels.push(`VirusTotal: suspicious URL (${url})`);
+            } catch (scanErr) {
+              vtResults.push({ url, malicious: false, suspicious: false, clean: false, error: "VirusTotal scan failed" });
+              infoNotes.push(`VirusTotal scan failed for ${url}`);
+            }
+          }
+
+          if (urls.length > MAX_URLS_TO_SCAN) {
+            infoNotes.push(
+              `Scanned only first ${MAX_URLS_TO_SCAN} URL(s) due to rate limits; ${urls.length - MAX_URLS_TO_SCAN} left unscanned.`
+            );
+          }
+        } else if (urls.length > 0) {
+          infoNotes.push("VirusTotal not configured; URLs were not scanned.");
+          console.warn("VirusTotal not configured: no user key and no VIRUSTOTAL_API_KEY in env.");
         }
-      } else if (urls.length > 0) {
-        infoNotes.push("VirusTotal not configured; URLs were not scanned.");
-        console.warn("VirusTotal not configured: no user key and no VIRUSTOTAL_API_KEY in env.");
+      } catch (e) {
+        console.warn("VirusTotal scanning skipped/failed:", e);
+        if (urls.length > 0) infoNotes.push("VirusTotal scanning error; URL risk unknown.");
       }
-    } catch (e) {
-      console.warn("VirusTotal scanning skipped/failed:", e);
-      if (urls.length > 0) infoNotes.push("VirusTotal scanning error; URL risk unknown.");
-    }
 
-    // Combine threat signals for server decision
-    const hasSensitive = (local.sensitiveData?.length ?? 0) > 0;
-    const combinedThreats = [...filteredLocalThreats, ...vtThreatLabels];
-    const hasThreats = combinedThreats.length > 0;
+      // combine signals
+      const hasSensitive = (local.sensitiveData?.length ?? 0) > 0;
+      const combinedThreats = [...filteredLocalThreats, ...vtThreatLabels];
+      const hasThreats = combinedThreats.length > 0;
 
-    if ((hasSensitive || hasThreats) && !force) {
-      return res.status(422).json({
-        message: "Sensitive or potentially unsafe content detected",
-        sensitiveData: local.sensitiveData,
+      if ((hasSensitive || hasThreats) && !force) {
+        return res.status(422).json({
+          message: "Sensitive or potentially unsafe content detected",
+          sensitiveData: local.sensitiveData,
+          threats: combinedThreats,
+          urls,
+          vtResults,
+          hint: "Resubmit with { force: true } to proceed anyway.",
+        });
+      }
+
+      const scanStatus: "clean" | "flagged" = hasSensitive || hasThreats ? "flagged" : "clean";
+      const scanResults = {
+        local: { ...local, threats: filteredLocalThreats },
+        vt: vtResults,
+        urls,
+        info: infoNotes,
+      };
+
+      const paste = await storage.createPaste({
+        ...pasteData,
+        content,
+        password,
+        ownerId: req.user!.id,
+        scanStatus,
+        scanResults: JSON.stringify(scanResults),
+      });
+
+      return res.status(201).json({
+        id: paste.id,
+        scanResult: scanStatus,
         threats: combinedThreats,
+        sensitiveData: local.sensitiveData || [],
+        info: infoNotes,
         urls,
         vtResults,
-        hint: "Resubmit with { force: true } to proceed anyway.",
       });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error(error);
+      return res.status(500).json({ message: "Failed to create paste" });
     }
-
-    // Determine scan status and persist structured results
-    const scanStatus: "clean" | "flagged" = hasSensitive || hasThreats ? "flagged" : "clean";
-    const scanResults = {
-      local: { ...local, threats: filteredLocalThreats },
-      vt: vtResults,
-      urls,
-      info: infoNotes,
-    };
-
-    const paste = await storage.createPaste({
-      ...pasteData,
-      content,
-      password,
-      ownerId: req.user!.id, // 👈 Use non-null assertion
-      scanStatus,
-      scanResults: JSON.stringify(scanResults),
-    });
-
-    return res.status(201).json({
-      id: paste.id,
-      scanResult: scanStatus,
-      threats: combinedThreats,
-      sensitiveData: local.sensitiveData || [],
-      info: infoNotes,
-      urls,
-      vtResults,
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ message: "Invalid input", errors: error.errors });
-    }
-    console.error(error);
-    return res.status(500).json({ message: "Failed to create paste" });
-  }
-});
+  });
 
   /* ---------------------------- My pastes ---------------------------- */
-  app.get("/api/my-pastes", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.get("/api/my-pastes", requireAuth, async (req: Request, res: Response) => {
     try {
-      const pastes = await storage.getUserPastes(req.user!.id); // 👈 Use non-null assertion
+      const pastes = await storage.getUserPastes(req.user!.id);
       return res.json(
         pastes.map((p) => ({
           id: p.id,
@@ -377,12 +345,12 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
   });
 
   /* ---------------------------- Delete paste ---------------------------- */
-  app.delete("/api/pastes/:id", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.delete("/api/pastes/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user!.id) { // 👈 Use non-null assertion
+      if (paste.ownerId !== req.user!.id) {
         return res.status(403).json({ message: "Not authorized to delete" });
       }
       await storage.deletePasteCascade(id);
@@ -394,7 +362,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
   });
 
   /* ---------------------------- Get paste by ID ---------------------------- */
-  app.get("/api/pastes/:id", async (req: Request, res: Response) => { // 👈 Use proper types
+  app.get("/api/pastes/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { password } = req.query;
@@ -403,19 +371,6 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       if (!paste) {
         return res.status(404).json({ message: "Paste not found" });
       }
-
-      // log access
-            // log access — don't block paste serving if logging fails
-      /*try {
-        const log = await storage.createAccessLog({
-          pasteId: id,
-          viewerIp: getClientIP(req),
-          userAgent: req.get("User-Agent") || "",
-        });
-        console.log('[ACCESS-LOG-INSERTED]', { pasteId: id, logId: log?.id ?? null });
-      } catch (err) {
-        console.error('[ACCESS-LOG-ERROR] createAccessLog failed', err);
-      }*/
 
       let content = paste.content;
       if (paste.encrypted) {
@@ -429,7 +384,6 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
         }
       }
 
-      // 👈 Safely check for req.user?.id
       return res.json({
         id: paste.id,
         content,
@@ -450,12 +404,12 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
   });
 
   /* ----------------------------- Access logs ----------------------------- */
-  app.get("/api/pastes/:id/logs", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.get("/api/pastes/:id/logs", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user!.id) { // 👈 Use non-null assertion
+      if (paste.ownerId !== req.user!.id) {
         return res.status(403).json({ message: "Not authorized to view logs" });
       }
       const logs = await storage.getPasteAccessLogs(id);
@@ -467,10 +421,9 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
   });
 
   /* ---------------------------- Settings (safe) ---------------------------- */
-  app.get("/api/settings", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.get("/api/settings", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = req.user!.id; // 👈 Use non-null assertion
-  
+      const userId = req.user!.id;
       let settings = await storage.getUserSettings(userId);
       if (!settings) {
         settings = await storage.createUserSettings({
@@ -479,7 +432,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
           defaultExpiry: "1day",
         });
       }
-  
+
       return res.json({
         emailNotifications: settings.emailNotifications,
         defaultExpiry: settings.defaultExpiry,
@@ -490,44 +443,32 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
     }
   });
 
-  app.put("/api/settings", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.put("/api/settings", requireAuth, async (req: Request, res: Response) => {
     try {
-      const userId = req.user!.id; // 👈 Use non-null assertion
-  
+      const userId = req.user!.id;
       const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
       const updates: any = { userId };
-  
+
       if (typeof req.body.emailNotifications === "boolean") {
         updates.emailNotifications = req.body.emailNotifications;
       }
       if (typeof req.body.defaultExpiry === "string") {
         updates.defaultExpiry = req.body.defaultExpiry;
       }
-  
-      // three-way behavior for VT key:
-      // - clearVirusTotalKey === true => null
-      // - virusTotalApiKey non-empty string => encrypt and set
-      // - otherwise (not present or empty string) => leave as is (do not include the column)
+
       if (req.body.clearVirusTotalKey === true) {
         updates.virusTotalApiKey = null;
-      } else if (
-        typeof req.body.virusTotalApiKey === "string" &&
-        req.body.virusTotalApiKey.trim().length > 0
-      ) {
-        updates.virusTotalApiKey = encryptionService.encryptApiKey(
-          req.body.virusTotalApiKey.trim(),
-          masterKey
-        );
+      } else if (typeof req.body.virusTotalApiKey === "string" && req.body.virusTotalApiKey.trim().length > 0) {
+        updates.virusTotalApiKey = encryptionService.encryptApiKey(req.body.virusTotalApiKey.trim(), masterKey);
       }
-  
-      // validate a partial shape (no google key at all)
+
       const PartialSettings = z.object({
         userId: z.string(),
         emailNotifications: z.boolean().optional(),
         defaultExpiry: z.string().optional(),
         virusTotalApiKey: z.string().nullable().optional(),
       });
-  
+
       const parsed = PartialSettings.parse(updates);
       const saved = await storage.updateUserSettings(userId, parsed);
 
@@ -549,18 +490,19 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
     }
   });
 
-
-  app.post("/api/scan", async (req: Request, res: Response) => { // 👈 Use proper types
+  /* ---------------------------- Scan helper used by client for preview ---------------------------- */
+  app.post("/api/scan", async (req: Request, res: Response) => {
     try {
       const { content } = z.object({ content: z.string() }).parse(req.body);
 
+      // Local scan (always run)
       const local = malwareScanner.scan(content);
       const urls = extractAllUrls(content);
       const domains = extractDomains(content, urls);
-      let vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
 
+      // Get VT key preference: user's stored key preferred (if authenticated), otherwise env
+      let vtKey = (process.env.VIRUSTOTAL_API_KEY || "").trim();
       try {
-        // If request is authenticated, try to read user's settings
         if (req.user?.id) {
           const settings = await storage.getUserSettings(req.user.id);
           if (settings?.virusTotalApiKey) {
@@ -576,6 +518,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       } catch (err) {
         console.warn("Failed to read user settings for VT key; using env fallback.", err);
       }
+
       const threats: string[] = [...local.threats];
       const sensitiveData: string[] = [...local.sensitiveData];
       const info: string[] = [];
@@ -635,21 +578,20 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
   });
 
   /* ----------------------------- Shareable links ----------------------------- */
-  app.post("/api/pastes/:id/share", requireAuth, async (req: Request, res: Response) => { // 👈 Use proper types
+  app.post("/api/pastes/:id/share", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { expiresAt, maxUsage } = req.body;
 
       const paste = await storage.getPaste(id);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
-      if (paste.ownerId !== req.user!.id) // 👈 Use non-null assertion
-        return res.status(403).json({ message: "Not authorized" });
+      if (paste.ownerId !== req.user!.id) return res.status(403).json({ message: "Not authorized" });
 
       const token = crypto.randomBytes(32).toString("hex");
       await storage.createShareableLink({
         pasteId: id,
         token,
-        createdBy: req.user!.id, // 👈 Use non-null assertion
+        createdBy: req.user!.id,
         expiresAt: expiresAt ? new Date(expiresAt) : undefined,
         maxUsage: maxUsage || undefined,
       });
@@ -664,7 +606,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
     }
   });
 
-  app.get("/api/share/:token", async (req: Request, res: Response) => { // 👈 Use proper types
+  app.get("/api/share/:token", async (req: Request, res: Response) => {
     try {
       const { token } = req.params;
       const { password } = req.query;
@@ -672,11 +614,8 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
       const link = await storage.getShareableLink(token);
       if (!link) return res.status(404).json({ message: "Link not found" });
 
-      if (link.expiresAt && link.expiresAt < new Date())
-        return res.status(404).json({ message: "Link has expired" });
-
-      if (link.maxUsage && (link.usageCount || 0) >= link.maxUsage)
-        return res.status(404).json({ message: "Link usage limit exceeded" });
+      if (link.expiresAt && link.expiresAt < new Date()) return res.status(404).json({ message: "Link has expired" });
+      if (link.maxUsage && (link.usageCount || 0) >= link.maxUsage) return res.status(404).json({ message: "Link usage limit exceeded" });
 
       const paste = await storage.getPaste(link.pasteId);
       if (!paste) return res.status(404).json({ message: "Paste not found" });
@@ -685,11 +624,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
 
       let content = paste.content;
       if (paste.encrypted) {
-        if (!password) {
-          return res
-            .status(401)
-            .json({ message: "Password required for encrypted paste" });
-        }
+        if (!password) return res.status(401).json({ message: "Password required for encrypted paste" });
         try {
           content = encryptionService.decrypt(paste.content, String(password));
         } catch {
