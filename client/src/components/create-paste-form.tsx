@@ -59,48 +59,43 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- auto-scan on content change (debounced) ----
-const debounceRef = useRef<number | null>(null);
-useEffect(() => {
-  const content = form.getValues("content") || "";
-  if (debounceRef.current) {
-    window.clearTimeout(debounceRef.current);
-    debounceRef.current = null;
-  }
-  if (!content.trim()) {
-    setScanResult(null);
-    return;
-  }
+  // ---------------- client-side quick credential/secret heuristics ----------------
+  function detectCredentials(content: string): string[] {
+    const findings: string[] = [];
+    if (!content) return findings;
 
-  // Debounce server scan to avoid excessive calls while typing
-  debounceRef.current = window.setTimeout(() => {
-    scanMutation.mutate(content);
-  }, 700); // 700ms debounce
+    const patterns: { name: string; re: RegExp }[] = [
+      { name: "Basic auth (user:pass)", re: /\b[a-zA-Z0-9._%+-]+:[^\s]{4,}\b/ },
+      { name: "password= or pwd=", re: /\b(password|pwd)\s*[:=]\s*[^,\s]{4,}/i },
+      { name: "AWS Access Key ID", re: /\bAKI[0-9A-Z]{16}\b/ },
+      { name: "Private key (BEGIN PRIVATE KEY)", re: /-----BEGIN (RSA |)?PRIVATE KEY-----/i },
+      { name: "SSH private key", re: /-----BEGIN OPENSSH PRIVATE KEY-----/i },
+      { name: "Google API key-like", re: /AIza[0-9A-Za-z-_]{35}/ },
+      { name: "JWT-like token", re: /\beyJ[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b/ },
+    ];
 
-  return () => {
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current);
-      debounceRef.current = null;
+    for (const p of patterns) {
+      if (p.re.test(content)) findings.push(p.name);
     }
-  };
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [form.watch("content")]); // watch content
-  // ---- helper to extract URLs (simple) ----
+
+    return findings;
+  }
+
+  // ---------------- helper: extract URLs (simple) ----------------
   function extractAllUrls(text: string): string[] {
     const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
     const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
     return Array.from(new Set(cleaned));
   }
 
-  // ---- scan mutation (calls your server /api/scan which runs VT + local heuristics) ----
-    const scanMutation = useMutation({
+  // ---------------- scan mutation (server is authoritative) ----------------
+  const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
       return await res.json();
     },
     onSuccess: (result: any) => {
-      // Server returns: { clean, threats, sensitiveData, info, urls, vtResults }
-      // Use server's authoritative result only (no client-side merging).
+      // result shape from server: { clean, threats, sensitiveData, info, urls, vtResults }
       setScanResult({
         clean: Boolean(result.clean),
         threats: result.threats || [],
@@ -118,7 +113,8 @@ useEffect(() => {
       });
     },
   });
-  // ---- create mutation ----
+
+  // ---------------- create mutation ----------------
   const createMutation = useMutation({
     mutationFn: async (data: FormData) => {
       const res = await apiRequest("POST", "/api/pastes", data);
@@ -143,7 +139,7 @@ useEffect(() => {
 
   // ---- manual scan triggered by button ----
   const handleScan = () => {
-    const content = form.getValues("content");
+    const content = form.getValues("content") || "";
     if (!content.trim()) {
       toast({
         title: "No content to scan",
@@ -155,64 +151,63 @@ useEffect(() => {
     scanMutation.mutate(content);
   };
 
-  // ---- auto-scan on content change (debounced) ----
-// ---- auto-scan on content change (debounced) ----
-const debounceRef = useRef<number | null>(null);
-useEffect(() => {
-  const content = form.getValues("content") || "";
+  // ---------------- auto-scan on content change (debounced) ----------------
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const content = form.getValues("content") || "";
 
-  // clear previous timer
-  if (debounceRef.current) {
-    window.clearTimeout(debounceRef.current);
-    debounceRef.current = null;
-  }
-
-  // if empty, clear scan result
-  if (!content.trim()) {
-    setScanResult(null);
-    return;
-  }
-
-  // quick client-side detection immediately (credentials etc)
-  const clientFindings = detectCredentials(content);
-
-  // extract URLs (client-side only to decide if we should call VT)
-  const urls = extractAllUrls(content);
-
-  // If there are immediate credential findings, show them right away (UX)
-  if (clientFindings.length > 0) {
-    setScanResult((prev) => ({
-      clean: false,
-      threats: prev?.threats ?? [],
-      sensitiveData: clientFindings,
-      urls: prev?.urls ?? [],
-      vtResults: prev?.vtResults ?? [],
-      info: prev?.info ?? [],
-    }));
-  }
-
-  // Decide whether to call server /api/scan:
-  // -> Only call if we have credentials OR at least one URL (so VT gets run for URLs).
-  if (clientFindings.length === 0 && urls.length === 0) {
-    // nothing worth scanning by server yet
-    return;
-  }
-
-  // debounce server scan (VT) to avoid excessive calls while typing
-  debounceRef.current = window.setTimeout(() => {
-    scanMutation.mutate(content);
-  }, 700); // 700ms debounce
-
-  return () => {
+    // clear previous timer
     if (debounceRef.current) {
       window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-  };
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [form.watch("content")]);
 
-  // ---- on submit, require password if encryption requested ----
+    // if empty, clear scan result and skip
+    if (!content.trim()) {
+      setScanResult(null);
+      return;
+    }
+
+    // quick client-side detection immediately (credentials etc)
+    const clientFindings = detectCredentials(content);
+
+    // extract URLs (client-side only to decide if we should call VT)
+    const urls = extractAllUrls(content);
+
+    // show immediate client-side findings (UX)
+    if (clientFindings.length > 0) {
+      setScanResult((prev) => ({
+        clean: false,
+        threats: prev?.threats ?? [],
+        sensitiveData: clientFindings,
+        urls: prev?.urls ?? [],
+        vtResults: prev?.vtResults ?? [],
+        info: prev?.info ?? [],
+      }));
+    }
+
+    // Decide whether to call server /api/scan:
+    // -> Only call if we have credentials OR at least one URL (so VT gets run for URLs).
+    if (clientFindings.length === 0 && urls.length === 0) {
+      // nothing worth scanning by server yet
+      return;
+    }
+
+    // debounce server scan (VT) to avoid excessive calls while typing
+    debounceRef.current = window.setTimeout(() => {
+      scanMutation.mutate(content);
+    }, 700); // 700ms debounce
+
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.watch("content")]);
+
+  // ---------------- submit handler ----------------
   const onSubmit = (data: FormData) => {
     if (data.encrypted && !data.password) {
       toast({
@@ -223,7 +218,7 @@ useEffect(() => {
       return;
     }
 
-    // Optional: if scanResult indicates issues, warn user before submit
+    // If server scan flagged issues, ask user to confirm
     if (scanResult && (!scanResult.clean || (scanResult.sensitiveData && scanResult.sensitiveData.length > 0))) {
       const proceed = window.confirm(
         `Security scan flagged possible issues (${(scanResult.threats?.length || 0) + (scanResult.sensitiveData?.length || 0)}). Are you sure you want to create the paste?`
@@ -420,8 +415,28 @@ useEffect(() => {
                           {scanResult.sensitiveData?.length ? (
                             <div><strong>Sensitive matches:</strong> {scanResult.sensitiveData.join(", ")}</div>
                           ) : null}
+
                           {scanResult.urls?.length ? (
-                            <div><strong>Found URLs:</strong> {scanResult.urls.join(", ")}</div>
+                            <div>
+                              <strong>Found URLs:</strong>
+                              <ul className="list-disc ml-6">
+                                {scanResult.urls.map((u) => {
+                                  const vt = (scanResult.vtResults || []).find((r: any) => r.url === u || r.domain === u);
+                                  return (
+                                    <li key={u}>
+                                      {u}
+                                      {vt ? (
+                                        <span className="ml-2 text-sm">
+                                          — {vt.malicious ? `malicious (${vt.positives}/${vt.total})` : vt.suspicious ? `suspicious (${vt.positives}/${vt.total})` : 'clean'}
+                                        </span>
+                                      ) : (
+                                        <span className="ml-2 text-sm text-slate-500"> — VT: unknown / not scanned</span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
                           ) : null}
                         </div>
                       </>
