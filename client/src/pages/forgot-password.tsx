@@ -30,7 +30,7 @@ export default function ForgotPasswordPage() {
     setError(null);
 
     const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
-      redirectTo: "https://secure-paste.vercel.app/reset-password", // ✅ Supabase will send user here
+      redirectTo: "https://secure-paste-six.vercel.app/reset-password", // ✅ Supabase will send user here
     });
 
     if (error) {
