@@ -1,4 +1,3 @@
-// client/src/pages/access-logs.tsx
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
@@ -8,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield } from "lucide-react";
+import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield, Copy } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { API_URL } from "@/lib/utils";
 
@@ -23,7 +22,6 @@ interface RawLog {
   accessed_at?: string;
 }
 
-/** Normalized log shape used in UI */
 interface AccessLog {
   id: string;
   pasteId?: string;
@@ -42,16 +40,13 @@ export default function AccessLogsPage(): JSX.Element {
       const res = await fetch(`${API_URL}/api/pastes/${pasteId}/logs`, {
         credentials: "include",
       });
-      if (!res.ok) {
-        throw new Error("Failed to fetch access logs");
-      }
+      if (!res.ok) throw new Error("Failed to fetch access logs");
       return await res.json();
     },
     enabled: !!pasteId,
     retry: false,
   });
 
-  // normalize logs to a predictable shape (handles snake_case & camelCase)
   const logs: AccessLog[] | undefined = rawLogs?.map((r) => ({
     id: String(r.id ?? cryptoIdFallback()),
     pasteId: r.pasteId ?? r.pasteId ?? undefined,
@@ -61,16 +56,15 @@ export default function AccessLogsPage(): JSX.Element {
   }));
 
   function cryptoIdFallback() {
-    // fallback for client-side unique key if server didn't provide id
     return `local-${Math.random().toString(36).slice(2, 9)}`;
   }
 
-  const getBrowserInfo = (userAgent: string) => {
-    const ua = (userAgent || "").toLowerCase();
-    if (ua.includes("chrome") && !ua.includes("edg")) return { name: "Chrome", color: "bg-blue-100 text-blue-800" };
-    if (ua.includes("firefox")) return { name: "Firefox", color: "bg-orange-100 text-orange-800" };
-    if (ua.includes("safari") && !ua.includes("chrome")) return { name: "Safari", color: "bg-gray-100 text-gray-800" };
-    if (ua.includes("edg") || ua.includes("edge")) return { name: "Edge", color: "bg-green-100 text-green-800" };
+  const getBrowserInfo = (ua: string) => {
+    const u = (ua || "").toLowerCase();
+    if (u.includes("chrome") && !u.includes("edg")) return { name: "Chrome", color: "bg-blue-100 text-blue-800" };
+    if (u.includes("firefox")) return { name: "Firefox", color: "bg-orange-100 text-orange-800" };
+    if (u.includes("safari") && !u.includes("chrome")) return { name: "Safari", color: "bg-gray-100 text-gray-800" };
+    if (u.includes("edg") || u.includes("edge")) return { name: "Edge", color: "bg-green-100 text-green-800" };
     return { name: "Unknown", color: "bg-slate-100 text-slate-800" };
   };
 
@@ -217,7 +211,16 @@ export default function AccessLogsPage(): JSX.Element {
 
                         <div className="min-w-0">
                           <div className="flex items-center space-x-2 mb-1 flex-wrap">
-                            <span className="font-medium text-slate-900 truncate">{log.viewerIp}</span>
+                            <span className="font-medium text-slate-900">{log.viewerIp}</span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => navigator.clipboard.writeText(log.viewerIp)}
+                              title="Copy IP"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </Button>
                             <span className="text-lg">{location.flag}</span>
                             <Badge variant="secondary" className="text-xs">
                               {location.location}
@@ -232,7 +235,7 @@ export default function AccessLogsPage(): JSX.Element {
 
                             <div className="flex items-center space-x-1 mt-1 sm:mt-0">
                               <Calendar className="w-3 h-3" />
-                              <span className="truncate">
+                              <span title={new Date(log.accessedAt).toLocaleString()}>
                                 {formatDistanceToNow(new Date(log.accessedAt), { addSuffix: true })}
                               </span>
                             </div>
@@ -240,9 +243,11 @@ export default function AccessLogsPage(): JSX.Element {
                         </div>
                       </div>
 
-                      {/* keep UA clipped on small screens, show full time on the right on larger */}
-                      <div className="mt-3 sm:mt-0 text-xs text-slate-500 truncate sm:ml-4 sm:w-48">
-                        {log.userAgent}
+                      <div
+                        className="mt-3 sm:mt-0 text-xs text-slate-500 sm:ml-4 sm:w-64"
+                        title={log.userAgent}
+                      >
+                        {log.userAgent.length > 50 ? log.userAgent.slice(0, 50) + "…" : log.userAgent}
                       </div>
                     </div>
                   );
