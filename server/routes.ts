@@ -404,7 +404,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
 
       // log access
             // log access — don't block paste serving if logging fails
-      try {
+      /*try {
         const log = await storage.createAccessLog({
           pasteId: id,
           viewerIp: getClientIP(req),
@@ -413,7 +413,7 @@ app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => { //
         console.log('[ACCESS-LOG-INSERTED]', { pasteId: id, logId: log?.id ?? null });
       } catch (err) {
         console.error('[ACCESS-LOG-ERROR] createAccessLog failed', err);
-      }
+      }*/
 
       let content = paste.content;
       if (paste.encrypted) {
