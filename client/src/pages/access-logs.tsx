@@ -73,6 +73,31 @@ export default function AccessLogsPage(): JSX.Element {
     }
     return { location: "External", flag: "🌍" };
   };
+  // add near getBrowserInfo
+const getDeviceInfo = (ua: string) => {
+  const u = (ua || "").toLowerCase();
+
+  // mobile phones
+  if (u.includes("iphone")) return { name: "iPhone", type: "mobile", icon: "📱" };
+  if (u.includes("android") && u.includes("mobile")) return { name: "Android", type: "mobile", icon: "📱" };
+
+  // tablets
+  if (u.includes("ipad") || (u.includes("android") && !u.includes("mobile"))) return { name: "Tablet", type: "tablet", icon: "📱" };
+
+  // desktop OS
+  if (u.includes("macintosh") || u.includes("mac os x")) return { name: "Mac", type: "desktop", icon: "🖥️" };
+  if (u.includes("windows")) return { name: "Windows", type: "desktop", icon: "🖥️" };
+  if (u.includes("linux") && !u.includes("android")) return { name: "Linux", type: "desktop", icon: "🖥️" };
+
+  // bots / crawlers
+  if (u.includes("bot") || u.includes("crawler") || u.includes("spider")) return { name: "Bot", type: "bot", icon: "🤖" };
+
+  // fallback: try to guess by presence of "mobile"
+  if (u.includes("mobile")) return { name: "Mobile", type: "mobile", icon: "📱" };
+
+  // unknown
+  return { name: "Unknown", type: "unknown", icon: "❓" };
+};
 
   if (!pasteId) {
     return (
