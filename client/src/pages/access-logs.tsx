@@ -1,3 +1,4 @@
+// client/src/pages/access-logs.tsx
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
@@ -9,8 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Eye, Calendar, MapPin, Monitor, ArrowLeft, Shield, Copy } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { apiRequest } from "@/lib/queryClient";  // ✅ add this
-
+import { apiRequest } from "@/lib/queryClient";  // ✅ required helper in your repo
 
 interface RawLog {
   id?: string;
@@ -59,10 +59,11 @@ export default function AccessLogsPage(): JSX.Element {
 
   const getBrowserInfo = (ua: string) => {
     const u = (ua || "").toLowerCase();
-    if (u.includes("chrome") && !u.includes("edg")) return { name: "Chrome", color: "bg-blue-100 text-blue-800" };
+    if (u.includes("chrome") && !u.includes("edg") && !u.includes("opr")) return { name: "Chrome", color: "bg-blue-100 text-blue-800" };
     if (u.includes("firefox")) return { name: "Firefox", color: "bg-orange-100 text-orange-800" };
     if (u.includes("safari") && !u.includes("chrome")) return { name: "Safari", color: "bg-gray-100 text-gray-800" };
     if (u.includes("edg") || u.includes("edge")) return { name: "Edge", color: "bg-green-100 text-green-800" };
+    if (u.includes("opr") || u.includes("opera")) return { name: "Opera", color: "bg-pink-100 text-pink-800" };
     return { name: "Unknown", color: "bg-slate-100 text-slate-800" };
   };
 
@@ -73,31 +74,32 @@ export default function AccessLogsPage(): JSX.Element {
     }
     return { location: "External", flag: "🌍" };
   };
-  // add near getBrowserInfo
-const getDeviceInfo = (ua: string) => {
-  const u = (ua || "").toLowerCase();
 
-  // mobile phones
-  if (u.includes("iphone")) return { name: "iPhone", type: "mobile", icon: "📱" };
-  if (u.includes("android") && u.includes("mobile")) return { name: "Android", type: "mobile", icon: "📱" };
+  // Simple device detection based on user-agent (heuristic)
+  const getDeviceInfo = (ua: string) => {
+    const u = (ua || "").toLowerCase();
 
-  // tablets
-  if (u.includes("ipad") || (u.includes("android") && !u.includes("mobile"))) return { name: "Tablet", type: "tablet", icon: "📱" };
+    // mobile phones
+    if (u.includes("iphone")) return { name: "iPhone", type: "mobile", icon: "📱" };
+    if (u.includes("android") && u.includes("mobile")) return { name: "Android", type: "mobile", icon: "📱" };
 
-  // desktop OS
-  if (u.includes("macintosh") || u.includes("mac os x")) return { name: "Mac", type: "desktop", icon: "🖥️" };
-  if (u.includes("windows")) return { name: "Windows", type: "desktop", icon: "🖥️" };
-  if (u.includes("linux") && !u.includes("android")) return { name: "Linux", type: "desktop", icon: "🖥️" };
+    // tablets
+    if (u.includes("ipad") || (u.includes("android") && !u.includes("mobile"))) return { name: "Tablet", type: "tablet", icon: "📱" };
 
-  // bots / crawlers
-  if (u.includes("bot") || u.includes("crawler") || u.includes("spider")) return { name: "Bot", type: "bot", icon: "🤖" };
+    // desktop OS
+    if (u.includes("macintosh") || u.includes("mac os x")) return { name: "Mac", type: "desktop", icon: "🖥️" };
+    if (u.includes("windows")) return { name: "Windows", type: "desktop", icon: "🖥️" };
+    if (u.includes("linux") && !u.includes("android")) return { name: "Linux", type: "desktop", icon: "🖥️" };
 
-  // fallback: try to guess by presence of "mobile"
-  if (u.includes("mobile")) return { name: "Mobile", type: "mobile", icon: "📱" };
+    // bots / crawlers
+    if (u.includes("bot") || u.includes("crawler") || u.includes("spider")) return { name: "Bot", type: "bot", icon: "🤖" };
 
-  // unknown
-  return { name: "Unknown", type: "unknown", icon: "❓" };
-};
+    // fallback: try to guess by presence of "mobile"
+    if (u.includes("mobile")) return { name: "Mobile", type: "mobile", icon: "📱" };
+
+    // unknown
+    return { name: "Unknown", type: "unknown", icon: "❓" };
+  };
 
   if (!pasteId) {
     return (
@@ -220,6 +222,7 @@ const getDeviceInfo = (ua: string) => {
               <div className="space-y-3">
                 {logs.map((log, index) => {
                   const browser = getBrowserInfo(log.userAgent);
+                  const device = getDeviceInfo(log.userAgent);
                   const location = getLocationInfo(log.viewerIp);
 
                   return (
@@ -251,9 +254,16 @@ const getDeviceInfo = (ua: string) => {
                           </div>
 
                           <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-3 text-sm text-slate-600">
-                            <div className="flex items-center space-x-1 truncate">
+                            <div className="flex items-center space-x-2 truncate">
                               <Monitor className="w-3 h-3 flex-shrink-0" />
                               <Badge className={`text-xs ${browser.color}`}>{browser.name}</Badge>
+
+                              {/* device badge */}
+                              <span className="mx-2" />
+                              <Badge variant="outline" className="text-xs">
+                                <span className="mr-1">{device.icon}</span>
+                                {device.name}
+                              </Badge>
                             </div>
 
                             <div className="flex items-center space-x-1 mt-1 sm:mt-0">
