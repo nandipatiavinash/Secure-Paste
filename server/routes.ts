@@ -147,19 +147,7 @@ setupAuth(app);
   }
 });
 
-      // increment paste viewCount (best-effort)
-      try {
-        await storage.incrementPasteViews(id);
-      } catch (err) {
-        console.error('[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed', err);
-      }
-
-      return res.status(204).send();
-    } catch (err) {
-      console.error('[VIEW-ENDPOINT] unexpected error', err);
-      return res.status(500).json({ message: "Failed to record view" });
-    }
-  });
+  
   // allow preflight on API routes
   app.options("/api/*", cors());
 
