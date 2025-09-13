@@ -1,3 +1,4 @@
+// client/src/pages/create-page.tsx  (or client/src/create-page.tsx depending on your structure)
 import { Navigation } from "@/components/navigation";
 import { CreatePasteForm } from "@/components/create-paste-form";
 import { Shield, FileText, Lock, Clock, Eye } from "lucide-react";
