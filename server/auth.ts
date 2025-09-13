@@ -1,5 +1,5 @@
 // server/auth.ts
-import { Express } from "express";
+import { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
@@ -14,14 +14,6 @@ const supabaseAdmin = createClient(
 );
 
 export function setupAuth(app: Express) {
-  /**
-   * NOTE: Normal user signup should be done on the CLIENT with supabase.auth.signUp({ email, password })
-   * That ensures Supabase sends confirmation emails and the standard flows work.
-   *
-   * This /api/register is intentionally disabled for normal signups to avoid admin-created users
-   * which bypass the normal confirm email flow. If you want admin creation later, we can provide
-   * a secured admin-only route.
-   */
   app.post("/api/register", async (_req, res) => {
     return res.status(405).json({
       message:
@@ -29,7 +21,6 @@ export function setupAuth(app: Express) {
     });
   });
 
-  // Login: optional server helper (but frontend usually calls Supabase directly)
   app.post("/api/login", async (req, res) => {
     try {
       const { email, password } = z
@@ -52,12 +43,6 @@ export function setupAuth(app: Express) {
     }
   });
 
-  /**
-   * post-confirm: idempotent endpoint to upsert a public.users row using the service role key.
-   * Call this from the client AFTER the user has confirmed email and/or has successfully signed in.
-   *
-   * Body: { id: string, email: string }
-   */
   app.post("/api/post-confirm", async (req, res) => {
     try {
       const { id, email } = req.body ?? {};
@@ -82,17 +67,14 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // Logout (client-side preferred)
   app.post("/api/logout", async (_req, res) => {
     return res.json({ message: "Logout should be handled on client via supabase.auth.signOut()" });
   });
 
-  // Current user placeholder (recommend client uses supabase.auth.getUser())
   app.get("/api/user", async (_req, res) => {
     return res.status(400).json({ message: "Use supabase.auth.getUser() on the client" });
   });
 
-  // Forgot password: generate recovery link via admin.generateLink (server)
   app.post("/api/forgot-password", async (req, res) => {
     try {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
@@ -101,8 +83,9 @@ export function setupAuth(app: Express) {
         type: "recovery",
         email,
         options: {
-          // adjust redirectTo to your front-end reset page
-          redirectTo: process.env.FRONTEND_BASE_URL?.replace(/\/$/, "") + "/reset-password" ?? "https://your-frontend/reset-password",
+          redirectTo:
+            process.env.FRONTEND_BASE_URL?.replace(/\/$/, "") + "/reset-password" ??
+            "https://your-frontend/reset-password",
         },
       });
 
@@ -117,4 +100,37 @@ export function setupAuth(app: Express) {
       return res.status(500).json({ message: "Internal server error" });
     }
   });
+}
+
+// 👇 standalone middleware, not inside setupAuth
+export async function attachSupabaseUser(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const auth = (req.headers["authorization"] || "") as string;
+    if (!auth.startsWith("Bearer ")) return next();
+
+    const token = auth.split(" ")[1].trim();
+    if (!token) return next();
+
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error) {
+      console.warn("[auth] supabase token validation failed:", error.message || error);
+      return next();
+    }
+
+    const user = data?.user;
+    if (!user) return next();
+
+    // @ts-ignore attach to req
+    req.user = {
+      id: user.id,
+      email: user.email ?? undefined,
+      raw: user,
+    };
+
+    return next();
+  } catch (err) {
+    console.warn("[auth] attachSupabaseUser unexpected error:", err);
+    return next();
+  }
 }
