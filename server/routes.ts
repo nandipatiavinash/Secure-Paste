@@ -97,82 +97,57 @@ export function registerRoutes(app: Express): Server {
   // view endpoint — client must call this to obtain content.
   // This enforces expiry, password for encrypted pastes, increments views,
   // records access log, and handles self-destruct (soft-delete).
-  app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { password } = req.body || {};
+  // POST /api/pastes/:id/view — atomic view + self-destruct handling
+app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body || {};
 
-      // fetch paste record
-      const paste = await storage.getPaste(id);
-      if (!paste) return res.status(404).json({ message: "Paste not found" });
-
-      // already deleted / self-destructed
-      if (paste.deletedAt) return res.status(410).json({ message: "Paste not available" });
-
-      // expiry enforcement
-      if (paste.expiresAt && new Date() > new Date(paste.expiresAt)) {
-        try {
-          await storage.markPasteDeleted(id);
-        } catch (e) {
-          console.warn("[VIEW] markPasteDeleted failed", id, e);
-        }
-        return res.status(410).json({ message: "Paste expired" });
-      }
-
-      // decrypt if encrypted
-      let plaintext = paste.content;
-      if (paste.encrypted) {
-        if (!password) return res.status(401).json({ message: "Password required", encrypted: true });
-        try {
-          plaintext = encryptionService.decrypt(paste.content, String(password));
-        } catch (e) {
-          return res.status(403).json({ message: "Invalid password" });
-        }
-      }
-
-      // update view metadata + handle self-destruct
-      try {
-        await storage.incrementPasteViews(id);
-        if (paste.selfDestruct) {
-          await storage.markPasteDeleted(id);
-        } else {
-          await storage.setPasteViewedAt(id, new Date());
-        }
-      } catch (e) {
-        console.error("[VIEW] failed updating view metadata", e);
-      }
-
-      // best-effort access log (do not block response)
-      (async () => {
-        try {
-          await storage.createAccessLog({
-            pasteId: id,
-            viewerIp: getClientIP(req),
-            userAgent: req.get("User-Agent") || "",
-          });
-        } catch (err) {
-          console.warn("[VIEW] createAccessLog failed", err);
-        }
-      })();
-
-      // return plaintext content
-      return res.json({
-        id: paste.id,
-        title: paste.title,
-        language: paste.language,
-        content: plaintext,
-        selfDestruct: !!paste.selfDestruct,
-      });
-    } catch (err) {
-      console.error("[VIEW-ENDPOINT] unexpected error", err);
-      return res.status(500).json({ message: "Failed to view paste" });
+    // Atomically fetch & update (increments views, handles expiry & self-destruct)
+    const paste = await storage.consumePasteForView(id);
+    if (!paste) {
+      // either not found, already deleted/self-destructed, or expired
+      return res.status(410).json({ message: "Paste not available" });
     }
-  });
-  // allow preflight
-  app.options("/api/*", cors());
 
-  // apply auth middleware to /api
-  app.use("/api", authMiddleware);
+    // decrypt if encrypted
+    let plaintext = paste.content as string;
+    if (paste.encrypted) {
+      if (!password) {
+        // frontend should show password prompt when GET /api/pastes/:id metadata shows encrypted=true
+        return res.status(401).json({ message: "Password required", encrypted: true });
+      }
+      try {
+        plaintext = encryptionService.decrypt(paste.content, String(password));
+      } catch (e) {
+        return res.status(403).json({ message: "Invalid password" });
+      }
+    }
+
+    // fire-and-forget access log (do not block response)
+    storage
+      .createAccessLog({
+        pasteId: id,
+        viewerIp: getClientIP(req),
+        userAgent: req.get("User-Agent") || "",
+      })
+      .catch((err) => {
+        console.warn("[VIEW] createAccessLog failed", err);
+      });
+
+    // return plaintext content
+    return res.json({
+      id: paste.id,
+      title: paste.title,
+      language: paste.language,
+      content: plaintext,
+      selfDestruct: !!paste.selfDestruct,
+    });
+  } catch (err) {
+    console.error("[VIEW-ENDPOINT] unexpected error", err);
+    return res.status(500).json({ message: "Failed to view paste" });
+  }
+});
 
   /* --------------------------- Create paste --------------------------- */
   app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => {
@@ -652,49 +627,50 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  app.get("/api/share/:token", async (req: Request, res: Response) => {
-    try {
-      const { token } = req.params;
-      const { password } = req.query;
+app.get("/api/share/:token", async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.query;
 
-      const link = await storage.getShareableLink(token);
-      if (!link) return res.status(404).json({ message: "Link not found" });
+    const link = await storage.getShareableLink(token);
+    if (!link) return res.status(404).json({ message: "Link not found" });
 
-      if (link.expiresAt && link.expiresAt < new Date()) return res.status(404).json({ message: "Link has expired" });
+    if (link.expiresAt && link.expiresAt < new Date()) return res.status(404).json({ message: "Link has expired" });
 
-      if (link.maxUsage && (link.usageCount || 0) >= link.maxUsage) return res.status(404).json({ message: "Link usage limit exceeded" });
+    if (link.maxUsage && (link.usageCount || 0) >= link.maxUsage) return res.status(404).json({ message: "Link usage limit exceeded" });
 
-      const paste = await storage.getPaste(link.pasteId);
-      if (!paste) return res.status(404).json({ message: "Paste not found" });
+    // increment link usage (best-effort, not transactional with paste consumption)
+    await storage.incrementLinkUsage(token);
 
-      await storage.incrementLinkUsage(token);
+    // Use atomic consumePasteForView to handle expiry/self-destruct correctly
+    const paste = await storage.consumePasteForView(link.pasteId);
+    if (!paste) return res.status(410).json({ message: "Paste not available" });
 
-      let content = paste.content;
-      if (paste.encrypted) {
-        if (!password) {
-          return res.status(401).json({ message: "Password required for encrypted paste" });
-        }
-        try {
-          content = encryptionService.decrypt(paste.content, String(password));
-        } catch {
-          return res.status(401).json({ message: "Invalid password" });
-        }
+    let content = paste.content as string;
+    if (paste.encrypted) {
+      if (!password) {
+        return res.status(401).json({ message: "Password required for encrypted paste" });
       }
-
-      return res.json({
-        id: paste.id,
-        title: paste.title,
-        content,
-        language: paste.language,
-        createdAt: paste.createdAt,
-        encrypted: paste.encrypted,
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ message: "Failed to access shared paste" });
+      try {
+        content = encryptionService.decrypt(paste.content, String(password));
+      } catch {
+        return res.status(401).json({ message: "Invalid password" });
+      }
     }
-  });
 
+    return res.json({
+      id: paste.id,
+      title: paste.title,
+      content,
+      language: paste.language,
+      createdAt: paste.createdAt,
+      encrypted: paste.encrypted,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Failed to access shared paste" });
+  }
+});
   const httpServer = createServer(app);
   return httpServer;
 }
