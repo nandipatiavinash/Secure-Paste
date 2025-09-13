@@ -9,7 +9,6 @@ import { encryptionService } from "./services/encryption";
 import { VirusTotalService } from "./services/virustotal";
 import crypto from "crypto";
 import cors from "cors";
-import { authMiddleware } from "./middleware/auth";
 import { insertPasteSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -156,185 +155,210 @@ app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
 });
 
   /* --------------------------- Create paste --------------------------- */
-  app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const pasteData = insertPasteSchema.parse(req.body);
-
-      // encryption
-      let content = pasteData.content;
-      let password = pasteData.password;
-      if (pasteData.encrypted && password) {
-        content = encryptionService.encrypt(pasteData.content, password);
-        password = undefined;
-      }
-
-      // VirusTotal scanning (user key preferred, fallback to env)
-      const MAX_URLS_TO_SCAN = 5;
-      type VtPerUrl = {
-        url: string;
-        malicious: boolean;
-        suspicious: boolean;
-        clean: boolean;
-        positives?: number;
-        total?: number;
-        detections?: string[];
-        scanDate?: string;
-        error?: string;
-      };
-
-      const vtResults: VtPerUrl[] = [];
-      const vtThreatLabels: string[] = [];
-      console.log("[VT] urls:", urls);
-
-      try {
-        const settings = await storage.getUserSettings(req.user!.id);
-        const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
-
-        let apiKeyFromSettings: string | null = null;
-        if (settings?.virusTotalApiKey) {
-          try {
-            apiKeyFromSettings = encryptionService.decryptApiKey(settings.virusTotalApiKey, masterKey);
-          } catch (e) {
-            console.warn("VirusTotal key decryption failed; will try env fallback.", e);
-          }
-        }
-
-        const apiKeyEnv = (process.env.VIRUSTOTAL_API_KEY || "").trim();
-        const apiKey = (apiKeyFromSettings?.trim() || "") || apiKeyEnv;
-        const vtConfigured = Boolean(apiKey);
-        console.log("[VT] vtConfigured?", vtConfigured);
-
-        if (vtConfigured && (urls.length > 0 || domains.length > 0)) {
-          const vtService = new VirusTotalService();
-
-          const MAX_DOMAINS_TO_SCAN = 5;
-          for (const d of domains.slice(0, MAX_DOMAINS_TO_SCAN)) {
-            try {
-              const r = await vtService.scanDomain(d, apiKey);
-              if (r.malicious) {
-                vtThreatLabels.push(`VirusTotal: malicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
-              } else if (r.suspicious) {
-                vtThreatLabels.push(`VirusTotal: suspicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
-              }
-            } catch (e: any) {
-              infoNotes.push(`VirusTotal scan failed for domain ${d}`);
-            }
-          }
-          if (domains.length > MAX_DOMAINS_TO_SCAN) {
-            infoNotes.push(
-              `Scanned only first ${MAX_DOMAINS_TO_SCAN} domain(s) due to rate limits; ${domains.length - MAX_DOMAINS_TO_SCAN} left unscanned.`
-            );
-          }
-
-          for (const url of urls.slice(0, MAX_URLS_TO_SCAN)) {
-            try {
-              const resVt = await vtService.scanUrl(url, apiKey, {
-                overallTimeoutMs: 12000,
-                perRequestTimeoutMs: 5000,
-                pollIntervalMs: 1000,
-              });
-              const clean = resVt.malicious === false && resVt.suspicious === false;
-
-              vtResults.push({
-                url,
-                malicious: !!resVt.malicious,
-                suspicious: !!resVt.suspicious,
-                clean,
-                positives: resVt.positives,
-                total: resVt.total,
-                detections: resVt.detections,
-                scanDate: resVt.scanDate,
-              });
-
-              if (resVt.malicious) vtThreatLabels.push(`VirusTotal: malicious URL (${url})`);
-              else if (resVt.suspicious) vtThreatLabels.push(`VirusTotal: suspicious URL (${url})`);
-            } catch (scanErr) {
-              vtResults.push({ url, malicious: false, suspicious: false, clean: false, error: "VirusTotal scan failed" });
-              infoNotes.push(`VirusTotal scan failed for ${url}`);
-            }
-          }
-
-          if (urls.length > MAX_URLS_TO_SCAN) {
-            infoNotes.push(
-              `Scanned only first ${MAX_URLS_TO_SCAN} URL(s) due to rate limits; ${urls.length - MAX_URLS_TO_SCAN} left unscanned.`
-            );
-          }
-        } else if (urls.length > 0) {
-          infoNotes.push("VirusTotal not configured; URLs were not scanned.");
-          console.warn("VirusTotal not configured: no user key and no VIRUSTOTAL_API_KEY in env.");
-        }
-      } catch (e) {
-        console.warn("VirusTotal scanning skipped/failed:", e);
-        if (urls.length > 0) infoNotes.push("VirusTotal scanning error; URL risk unknown.");
-      }
-
-      // combine threats
-      const hasSensitive = (local.sensitiveData?.length ?? 0) > 0;
-      const combinedThreats = [...filteredLocalThreats, ...vtThreatLabels];
-      const hasThreats = combinedThreats.length > 0;
-
-      if ((hasSensitive || hasThreats) && !force) {
-  // Log full scan details on server for debugging (do NOT expose to clients)
+// create paste (cleaned & ordered)
+app.post("/api/pastes", requireAuth, async (req: Request, res: Response) => {
   try {
-    console.warn("[SCAN] flagged paste - details hidden from client", {
-      sensitiveData: local.sensitiveData,
-      threats: combinedThreats,
-      urls,
-      vtResults, // full array
+    const pasteData = insertPasteSchema.parse(req.body);
+
+    // encryption (if requested)
+    let content = pasteData.content;
+    let password = pasteData.password;
+    if (pasteData.encrypted && password) {
+      content = encryptionService.encrypt(pasteData.content, password);
+      password = undefined;
+    }
+
+    // local scan + extract urls/domains (must run BEFORE VT scanning)
+    const local = malwareScanner.scan(pasteData.content);
+    console.log("[SCAN RESULT] (server-only)", {
+      // only log server-side; avoid returning raw detection objects to clients
+      sensitiveDataCount: (local.sensitiveData || []).length,
+      threatsCount: (local.threats || []).length,
     });
-  } catch (e) {
-    console.warn("[SCAN] failed to log full scan details", e);
-  }
 
-  // Build a compact summary for the client
-  const summary = {
-    message: "Sensitive or potentially unsafe content detected",
-    hint: "Resubmit with { force: true } to proceed anyway.",
-    // user-facing labels only (no raw detection objects)
-    sensitiveData: (local.sensitiveData || []).slice(0, 10), // short list
-    threats: combinedThreats.slice(0, 10),
-    urlCount: urls.length,
-    vtFlaggedCount: vtThreatLabels.length,
-  };
+    const urls = extractAllUrls(pasteData.content);
+    const domains = extractDomains(pasteData.content, urls);
 
-  return res.status(422).json(summary);
-}
+    // remove URL-prefixed threats (we'll list URLs separately)
+    const filteredLocalThreats = Array.isArray(local.threats)
+      ? local.threats.filter((t: string) => !/^\s*URL\b/i.test(t))
+      : [];
 
-      const scanStatus: "clean" | "flagged" = hasSensitive || hasThreats ? "flagged" : "clean";
-      const scanResults = {
-        local: { ...local, threats: filteredLocalThreats },
-        vt: vtResults,
-        urls,
-        info: infoNotes,
+    // informational notes
+    const infoNotes: string[] = urls.length
+      ? [`${urls.length} URL${urls.length > 1 ? "s" : ""} detected in content`]
+      : [];
+
+    // allow clients to force-create (bypass warnings)
+    const force = Boolean((req.body as any)?.force ?? false);
+
+    // VirusTotal scanning (user key preferred, fallback to env)
+    const MAX_URLS_TO_SCAN = 5;
+    type VtPerUrl = {
+      url?: string;
+      domain?: string;
+      malicious: boolean;
+      suspicious: boolean;
+      clean: boolean;
+      positives?: number;
+      total?: number;
+      detections?: string[];
+      scanDate?: string;
+      error?: string;
+    };
+
+    const vtResults: VtPerUrl[] = [];
+    const vtThreatLabels: string[] = [];
+    console.log("[VT] urls/domains to scan:", { urlsCount: urls.length, domainsCount: domains.length });
+
+    try {
+      const settings = await storage.getUserSettings(req.user!.id);
+      const masterKey = process.env.MASTER_ENCRYPTION_KEY || "default-master-key";
+
+      let apiKeyFromSettings: string | null = null;
+      if (settings?.virusTotalApiKey) {
+        try {
+          apiKeyFromSettings = encryptionService.decryptApiKey(settings.virusTotalApiKey, masterKey);
+        } catch (e) {
+          console.warn("VirusTotal key decryption failed; will try env fallback.", e);
+        }
+      }
+
+      const apiKeyEnv = (process.env.VIRUSTOTAL_API_KEY || "").trim();
+      const apiKey = (apiKeyFromSettings?.trim() || "") || apiKeyEnv;
+      const vtConfigured = Boolean(apiKey);
+      console.log("[VT] vtConfigured?", vtConfigured);
+
+      if (vtConfigured && (urls.length > 0 || domains.length > 0)) {
+        const vtService = new VirusTotalService();
+
+        const MAX_DOMAINS_TO_SCAN = 5;
+        for (const d of domains.slice(0, MAX_DOMAINS_TO_SCAN)) {
+          try {
+            const r = await vtService.scanDomain(d, apiKey);
+            vtResults.push({ domain: d, ...r });
+            if (r.malicious) {
+              vtThreatLabels.push(`VirusTotal: malicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
+            } else if (r.suspicious) {
+              vtThreatLabels.push(`VirusTotal: suspicious domain (${d}) — ${r.positives}/${r.total} engines flagged`);
+            }
+          } catch (e: any) {
+            infoNotes.push(`VirusTotal scan failed for domain ${d}`);
+          }
+        }
+        if (domains.length > MAX_DOMAINS_TO_SCAN) {
+          infoNotes.push(
+            `Scanned only first ${MAX_DOMAINS_TO_SCAN} domain(s) due to rate limits; ${domains.length - MAX_DOMAINS_TO_SCAN} left unscanned.`
+          );
+        }
+
+        for (const url of urls.slice(0, MAX_URLS_TO_SCAN)) {
+          try {
+            const resVt = await vtService.scanUrl(url, apiKey, {
+              overallTimeoutMs: 12000,
+              perRequestTimeoutMs: 5000,
+              pollIntervalMs: 1000,
+            });
+            const clean = resVt.malicious === false && resVt.suspicious === false;
+
+            vtResults.push({
+              url,
+              malicious: !!resVt.malicious,
+              suspicious: !!resVt.suspicious,
+              clean,
+              positives: resVt.positives,
+              total: resVt.total,
+              detections: resVt.detections,
+              scanDate: resVt.scanDate,
+            });
+
+            if (resVt.malicious) vtThreatLabels.push(`VirusTotal: malicious URL (${url})`);
+            else if (resVt.suspicious) vtThreatLabels.push(`VirusTotal: suspicious URL (${url})`);
+          } catch (scanErr) {
+            vtResults.push({ url, malicious: false, suspicious: false, clean: false, error: "VirusTotal scan failed" });
+            infoNotes.push(`VirusTotal scan failed for ${url}`);
+          }
+        }
+
+        if (urls.length > MAX_URLS_TO_SCAN) {
+          infoNotes.push(
+            `Scanned only first ${MAX_URLS_TO_SCAN} URL(s) due to rate limits; ${urls.length - MAX_URLS_TO_SCAN} left unscanned.`
+          );
+        }
+      } else if (urls.length > 0) {
+        infoNotes.push("VirusTotal not configured; URLs were not scanned.");
+        console.warn("VirusTotal not configured: no user key and no VIRUSTOTAL_API_KEY in env.");
+      }
+    } catch (e) {
+      console.warn("VirusTotal scanning skipped/failed:", e);
+      if (urls.length > 0) infoNotes.push("VirusTotal scanning error; URL risk unknown.");
+    }
+
+    // combine threats
+    const hasSensitive = (local.sensitiveData?.length ?? 0) > 0;
+    const combinedThreats = [...filteredLocalThreats, ...vtThreatLabels];
+    const hasThreats = combinedThreats.length > 0;
+
+    // If flagged and not forced — return a compact summary (no raw objects)
+    if ((hasSensitive || hasThreats) && !force) {
+      try {
+        console.warn("[SCAN] flagged paste - details hidden from client", {
+          sensitiveData: local.sensitiveData,
+          threats: combinedThreats,
+          urls,
+          vtResults,
+        });
+      } catch (e) {
+        console.warn("[SCAN] failed to log full scan details", e);
+      }
+
+      const summary = {
+        message: "Sensitive or potentially unsafe content detected",
+        hint: "Resubmit with { force: true } to proceed anyway.",
+        sensitiveData: (local.sensitiveData || []).slice(0, 10),
+        threats: combinedThreats.slice(0, 10),
+        urlCount: urls.length,
+        vtFlaggedCount: vtThreatLabels.length,
       };
 
-      const paste = await storage.createPaste({
-        ...pasteData,
-        content,
-        password,
-        ownerId: req.user!.id,
-        scanStatus,
-        scanResults: JSON.stringify(scanResults),
-      });
-
-      return res.status(201).json({
-        id: paste.id,
-        scanResult: scanStatus,
-        threats: combinedThreats,
-        sensitiveData: local.sensitiveData || [],
-        info: infoNotes,
-        urls,
-        vtResults,
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input", errors: error.errors });
-      }
-      console.error(error);
-      return res.status(500).json({ message: "Failed to create paste" });
+      return res.status(422).json(summary);
     }
-  });
 
+    // persist paste
+    const scanStatus: "clean" | "flagged" = hasSensitive || hasThreats ? "flagged" : "clean";
+    const scanResults = {
+      local: { ...local, threats: filteredLocalThreats },
+      vt: vtResults,
+      urls,
+      info: infoNotes,
+    };
+
+    const paste = await storage.createPaste({
+      ...pasteData,
+      content,
+      password,
+      ownerId: req.user!.id,
+      scanStatus,
+      scanResults: JSON.stringify(scanResults),
+    });
+
+    return res.status(201).json({
+      id: paste.id,
+      scanResult: scanStatus,
+      threats: combinedThreats,
+      sensitiveData: local.sensitiveData || [],
+      info: infoNotes,
+      urls,
+      vtResults,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: "Invalid input", errors: error.errors });
+    }
+    console.error(error);
+    return res.status(500).json({ message: "Failed to create paste" });
+  }
+});
   /* ---------------------------- My pastes ---------------------------- */
   app.get("/api/my-pastes", requireAuth, async (req: Request, res: Response) => {
     try {
