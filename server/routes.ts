@@ -170,6 +170,7 @@ app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
 
       // local scan + extract urls/domains
       const local = malwareScanner.scan(pasteData.content);
+      console.log("[SCAN RESULT]", local);   // 👈 add this line
       const urls = extractAllUrls(pasteData.content);
       const domains = extractDomains(pasteData.content, urls);
 
