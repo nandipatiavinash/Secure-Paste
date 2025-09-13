@@ -94,36 +94,80 @@ export function registerRoutes(app: Express): Server {
   );
 
   // view endpoint (client calls on mount)
+  // view endpoint — client must call this to obtain content.
+  // This enforces expiry, password for encrypted pastes, increments views,
+  // records access log, and handles self-destruct (soft-delete).
   app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const { password } = req.body || {};
 
-      // best-effort insert access log (don't block)
-      try {
-        const log = await storage.createAccessLog({
-          pasteId: id,
-          viewerIp: getClientIP(req),
-          userAgent: req.get("User-Agent") || "",
-        });
-        console.log("[VIEW-ENDPOINT-LOGGED]", { pasteId: id, logId: log?.id ?? null });
-      } catch (err) {
-        console.error("[VIEW-ENDPOINT-LOG-ERROR] createAccessLog failed", err);
+      // fetch paste record
+      const paste = await storage.getPaste(id);
+      if (!paste) return res.status(404).json({ message: "Paste not found" });
+
+      // already deleted / self-destructed
+      if (paste.deletedAt) return res.status(410).json({ message: "Paste not available" });
+
+      // expiry enforcement
+      if (paste.expiresAt && new Date() > new Date(paste.expiresAt)) {
+        try {
+          await storage.markPasteDeleted(id);
+        } catch (e) {
+          console.warn("[VIEW] markPasteDeleted failed", id, e);
+        }
+        return res.status(410).json({ message: "Paste expired" });
       }
 
-      // best-effort increment viewCount
+      // decrypt if encrypted
+      let plaintext = paste.content;
+      if (paste.encrypted) {
+        if (!password) return res.status(401).json({ message: "Password required", encrypted: true });
+        try {
+          plaintext = encryptionService.decrypt(paste.content, String(password));
+        } catch (e) {
+          return res.status(403).json({ message: "Invalid password" });
+        }
+      }
+
+      // update view metadata + handle self-destruct
       try {
         await storage.incrementPasteViews(id);
-      } catch (err) {
-        console.error("[VIEW-ENDPOINT-INC-ERROR] incrementPasteViews failed", err);
+        if (paste.selfDestruct) {
+          await storage.markPasteDeleted(id);
+        } else {
+          await storage.setPasteViewedAt(id, new Date());
+        }
+      } catch (e) {
+        console.error("[VIEW] failed updating view metadata", e);
       }
 
-      return res.status(204).send();
+      // best-effort access log (do not block response)
+      (async () => {
+        try {
+          await storage.createAccessLog({
+            pasteId: id,
+            viewerIp: getClientIP(req),
+            userAgent: req.get("User-Agent") || "",
+          });
+        } catch (err) {
+          console.warn("[VIEW] createAccessLog failed", err);
+        }
+      })();
+
+      // return plaintext content
+      return res.json({
+        id: paste.id,
+        title: paste.title,
+        language: paste.language,
+        content: plaintext,
+        selfDestruct: !!paste.selfDestruct,
+      });
     } catch (err) {
       console.error("[VIEW-ENDPOINT] unexpected error", err);
-      return res.status(500).json({ message: "Failed to record view" });
+      return res.status(500).json({ message: "Failed to view paste" });
     }
   });
-
   // allow preflight
   app.options("/api/*", cors());
 
@@ -359,44 +403,43 @@ export function registerRoutes(app: Express): Server {
   });
 
   /* ---------------------------- Get paste by ID ---------------------------- */
+  /* ---------------------------- Get paste by ID (metadata-only) ---------------------------- */
   app.get("/api/pastes/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { password } = req.query;
 
       const paste = await storage.getPaste(id);
       if (!paste) {
         return res.status(404).json({ message: "Paste not found" });
       }
 
-      let content = paste.content;
-      if (paste.encrypted) {
-        if (!password) {
-          return res.status(401).json({ message: "Password required for encrypted paste" });
-        }
+      // treat deleted/expired as not available
+      if (paste.deletedAt) return res.status(410).json({ message: "Paste not available" });
+      if (paste.expiresAt && new Date() > new Date(paste.expiresAt)) {
         try {
-          content = encryptionService.decrypt(paste.content, String(password));
-        } catch {
-          return res.status(401).json({ message: "Invalid password" });
+          await storage.markPasteDeleted(id);
+        } catch (e) {
+          console.warn("[GET] markPasteDeleted failed", id, e);
         }
+        return res.status(410).json({ message: "Paste expired" });
       }
 
+      // Return metadata only (do NOT include content)
       return res.json({
         id: paste.id,
-        content,
         title: paste.title,
         language: paste.language,
         viewCount: paste.viewCount,
         createdAt: paste.createdAt,
         expiresAt: paste.expiresAt,
-        encrypted: paste.encrypted,
-        selfDestruct: paste.selfDestruct,
+        encrypted: !!paste.encrypted,
+        selfDestruct: !!paste.selfDestruct,
         scanStatus: paste.scanStatus,
         isOwner: paste.ownerId === req.user?.id,
       });
     } catch (error) {
-      console.error(error);
-      return res.status(500).json({ message: "Failed to retrieve paste" });
+      console.error("[GET /api/pastes/:id] error", error);
+      return res.status(500).json({ message: "Failed to retrieve paste metadata" });
     }
   });
 
