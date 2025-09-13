@@ -183,15 +183,32 @@ app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
         : [];
 
       const force = Boolean((req.body as any)?.force ?? false);
-      if ((local.sensitiveData?.length || filteredLocalThreats.length) && !force) {
-        return res.status(422).json({
-          message: "Sensitive or potentially unsafe content detected",
-          sensitiveData: local.sensitiveData,
-          threats: filteredLocalThreats,
-          urls,
-          hint: "Resubmit with { force: true } to proceed anyway.",
-        });
-      }
+if ((local.sensitiveData?.length || filteredLocalThreats.length) && !force) {
+  // Log full scan details on server for debugging (do NOT expose to clients)
+  try {
+    console.warn("[SCAN] flagged paste - details hidden from client", {
+      sensitiveData: local.sensitiveData,
+      threats: combinedThreats,
+      urls,
+      vtResults, // full array
+    });
+  } catch (e) {
+    console.warn("[SCAN] failed to log full scan details", e);
+  }
+
+  // Build a compact summary for the client
+  const summary = {
+    message: "Sensitive or potentially unsafe content detected",
+    hint: "Resubmit with { force: true } to proceed anyway.",
+    // user-facing labels only (no raw detection objects)
+    sensitiveData: (local.sensitiveData || []).slice(0, 10), // short list
+    threats: combinedThreats.slice(0, 10),
+    urlCount: urls.length,
+    vtFlaggedCount: vtThreatLabels.length,
+  };
+
+  return res.status(422).json(summary);
+}
 
       // VirusTotal scanning (user key preferred, fallback to env)
       const MAX_URLS_TO_SCAN = 5;
