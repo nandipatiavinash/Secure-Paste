@@ -1,4 +1,4 @@
-// paste-display.tsx
+// client/src/components/paste-display.tsx
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,7 @@ export function PasteDisplay({
   const [password, setPassword] = useState("");
   const [showDetails, setShowDetails] = useState(false);
 
-  // small helpers
+  // ---- Helpers ----
   const copyToClipboard = async (text: string, label = "content") => {
     try {
       await navigator.clipboard.writeText(text);
@@ -70,9 +70,7 @@ export function PasteDisplay({
   const copyLink = async () => {
     try {
       await copyToClipboard(window.location.href, "link");
-    } catch {
-      /* fallback handled in copyToClipboard */
-    }
+    } catch {}
   };
 
   const downloadContent = () => {
@@ -120,11 +118,19 @@ export function PasteDisplay({
     return `${days} day${days === 1 ? "" : "s"} ago`;
   };
 
-  // memoize counts for rendering
+  // Redact long matches and mask sensitive substrings.
+  function redact(s: string, max = 60) {
+    if (!s) return s;
+    if (s.length <= max) return s;
+    const head = s.slice(0, 24);
+    const tail = s.slice(-24);
+    return `${head}…${tail}`;
+  }
+
   const sensitiveCount = useMemo(() => paste.sensitiveData?.length ?? 0, [paste.sensitiveData]);
   const threatCount = useMemo(() => paste.threats?.length ?? 0, [paste.threats]);
 
-  // password prompt view
+  // password prompt
   if (requiresPassword) {
     return (
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -161,7 +167,7 @@ export function PasteDisplay({
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
       <Card className="overflow-hidden">
-        {/* header / meta row */}
+        {/* header */}
         <div className="border-b border-slate-200 p-6">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="min-w-0">
@@ -222,7 +228,7 @@ export function PasteDisplay({
           </pre>
         </div>
 
-        {/* footer: meta and flagged details */}
+        {/* footer */}
         <div className="border-t border-slate-200 p-6 bg-slate-50">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center space-x-6 text-sm text-slate-600 flex-wrap">
@@ -261,7 +267,7 @@ export function PasteDisplay({
             </div>
           </div>
 
-          {/* flagged details panel (full width, appears below metadata) */}
+          {/* flagged panel */}
           {paste.scanStatus !== "clean" && (
             <div className="mt-4">
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -269,13 +275,9 @@ export function PasteDisplay({
                   <div className="flex items-center">
                     <AlertTriangle className="w-5 h-5 text-red-700 mr-2" />
                     <div>
-                      <h4 className="text-red-700 font-semibold">
-                        Sensitive Data Detected
-                      </h4>
+                      <h4 className="text-red-700 font-semibold">Sensitive Data Detected</h4>
                       <div className="text-sm text-red-800">
-                        {sensitiveCount > 0
-                          ? `${sensitiveCount} item${sensitiveCount === 1 ? "" : "s"} detected`
-                          : "Potentially sensitive content found"}
+                        {sensitiveCount > 0 ? `${sensitiveCount} item${sensitiveCount === 1 ? "" : "s"} detected` : "Potentially sensitive content found"}
                         {threatCount > 0 ? ` — ${threatCount} threat${threatCount === 1 ? "" : "s"}` : ""}
                       </div>
                     </div>
@@ -307,23 +309,23 @@ export function PasteDisplay({
                       <div>
                         <h5 className="text-sm font-medium text-red-700 mb-1">Sensitive Data</h5>
                         <ul className="list-disc list-inside text-sm text-red-800 space-y-1 max-h-48 overflow-auto">
-                          {paste.sensitiveData && paste.sensitiveData.length > 0 ? (
-                            paste.sensitiveData.map((s, idx) => <li key={idx}>{s}</li>)
-                          ) : (
-                            <li>No specific labels available</li>
-                          )}
+                          {(paste.sensitiveData || []).slice(0, 20).map((s, idx) => (
+                            <li key={idx}>{redact(String(s))}</li>
+                          ))}
                         </ul>
+                        {(paste.sensitiveData?.length ?? 0) > 20 && (
+                          <div className="text-xs text-red-700 mt-1">+{(paste.sensitiveData!.length - 20)} more</div>
+                        )}
                       </div>
 
                       <div>
                         <h5 className="text-sm font-medium text-red-700 mb-1">Threats</h5>
                         <ul className="list-disc list-inside text-sm text-red-800 space-y-1 max-h-48 overflow-auto">
-                          {paste.threats && paste.threats.length > 0 ? (
-                            paste.threats.map((t, idx) => <li key={idx}>{t}</li>)
-                          ) : (
-                            <li>No specific threats available</li>
-                          )}
+                          {(paste.threats || []).slice(0, 20).map((t, idx) => <li key={idx}>{redact(String(t))}</li>)}
                         </ul>
+                        {(paste.threats?.length ?? 0) > 20 && (
+                          <div className="text-xs text-red-700 mt-1">+{(paste.threats!.length - 20)} more</div>
+                        )}
                       </div>
                     </div>
                   </div>
