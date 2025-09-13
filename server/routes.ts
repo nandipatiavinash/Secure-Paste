@@ -299,15 +299,31 @@ app.post("/api/pastes/:id/view", async (req: Request, res: Response) => {
       const hasThreats = combinedThreats.length > 0;
 
       if ((hasSensitive || hasThreats) && !force) {
-        return res.status(422).json({
-          message: "Sensitive or potentially unsafe content detected",
-          sensitiveData: local.sensitiveData,
-          threats: combinedThreats,
-          urls,
-          vtResults,
-          hint: "Resubmit with { force: true } to proceed anyway.",
-        });
-      }
+  // Log full scan details on server for debugging (do NOT expose to clients)
+  try {
+    console.warn("[SCAN] flagged paste - details hidden from client", {
+      sensitiveData: local.sensitiveData,
+      threats: combinedThreats,
+      urls,
+      vtResults, // full array
+    });
+  } catch (e) {
+    console.warn("[SCAN] failed to log full scan details", e);
+  }
+
+  // Build a compact summary for the client
+  const summary = {
+    message: "Sensitive or potentially unsafe content detected",
+    hint: "Resubmit with { force: true } to proceed anyway.",
+    // user-facing labels only (no raw detection objects)
+    sensitiveData: (local.sensitiveData || []).slice(0, 10), // short list
+    threats: combinedThreats.slice(0, 10),
+    urlCount: urls.length,
+    vtFlaggedCount: vtThreatLabels.length,
+  };
+
+  return res.status(422).json(summary);
+}
 
       const scanStatus: "clean" | "flagged" = hasSensitive || hasThreats ? "flagged" : "clean";
       const scanResults = {
