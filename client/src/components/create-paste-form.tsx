@@ -59,18 +59,15 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- helper to extract URLs (simple, client-side only UI) ----
   function extractAllUrls(text: string): string[] {
     const matches = text.match(/\bhttps?:\/\/[^\s)]+/gi) || [];
     const cleaned = matches.map((u) => u.replace(/[),.;]+$/g, ""));
     return Array.from(new Set(cleaned));
   }
 
-  // ---- scan mutation (calls your server /api/scan which runs VT + local heuristics) ----
   const scanMutation = useMutation({
     mutationFn: async (content: string) => {
       const res = await apiRequest("POST", "/api/scan", { content });
-      // intentionally try to parse json body (server returns either 200 or error with json)
       const json = await res.json();
       if (!res.ok) throw json;
       return json;
@@ -86,7 +83,6 @@ export function CreatePasteForm() {
       });
     },
     onError: (err: any) => {
-      // err may be object from server or text
       toast({
         title: "Scan failed",
         description: err?.message || "Unable to scan content. Please try again.",
@@ -95,7 +91,6 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- create mutation ----
   const createMutation = useMutation({
     mutationFn: async (data: FormData) => {
       const res = await apiRequest("POST", "/api/pastes", data);
@@ -111,7 +106,6 @@ export function CreatePasteForm() {
       setLocation(`/paste/${result.id}/success`);
     },
     onError: (err: any) => {
-      // server returns structured error (422) with message + details - show that
       const message =
         (err && (err.message || (err?.message === undefined && JSON.stringify(err)))) ||
         "Please try again.";
@@ -123,7 +117,6 @@ export function CreatePasteForm() {
     },
   });
 
-  // ---- debounced auto-scan on content change (backend-only scan) ----
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     const content = form.getValues("content") || "";
@@ -138,7 +131,6 @@ export function CreatePasteForm() {
       return;
     }
 
-    // If there's at least something to scan, call server /api/scan (debounced)
     debounceRef.current = window.setTimeout(() => {
       scanMutation.mutate(content);
     }, 700);
@@ -149,11 +141,8 @@ export function CreatePasteForm() {
         debounceRef.current = null;
       }
     };
-    // purposefully using form.watch to re-run when content changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.watch("content")]);
 
-  // ---- manual scan triggered by button ----
   const handleScan = () => {
     const content = form.getValues("content");
     if (!content.trim()) {
@@ -167,7 +156,6 @@ export function CreatePasteForm() {
     scanMutation.mutate(content);
   };
 
-  // ---- on submit, require password if encryption requested ----
   const onSubmit = (data: FormData) => {
     if (data.encrypted && !data.password) {
       toast({
@@ -178,7 +166,6 @@ export function CreatePasteForm() {
       return;
     }
 
-    // Optional: if scanResult indicates issues, warn user before submit
     if (scanResult && (!scanResult.clean || (scanResult.sensitiveData && scanResult.sensitiveData.length > 0))) {
       const proceed = window.confirm(
         `Security scan flagged possible issues (${(scanResult.threats?.length || 0) + (scanResult.sensitiveData?.length || 0)}). Are you sure you want to create the paste?`
@@ -349,7 +336,6 @@ export function CreatePasteForm() {
                 )}
               />
 
-              {/* Scan results */}
               {scanResult && (
                 <Alert className={scanResult.clean ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}>
                   <div className="flex items-center space-x-2">
@@ -375,7 +361,7 @@ export function CreatePasteForm() {
                           {scanResult.sensitiveData?.length ? (
                             <div><strong>Sensitive matches:</strong> {scanResult.sensitiveData.join(", ")}</div>
                           ) : null}
-                          
+
                           {scanResult.urls?.length ? (
                             <div>
                               <strong>Found URLs:</strong>
