@@ -114,6 +114,15 @@ export default function PasteView() {
 
       const json: PasteContentResponse = await res.json();
       setContent(json.content);
+      try {
+  const r = await fetch(`${API_URL}/api/pastes/${pasteId}`, { credentials: "include" });
+  if (r.ok) {
+    const updatedMeta = await r.json();
+    setMeta(updatedMeta);
+  }
+} catch (e) {
+  console.warn("Failed to refresh metadata", e);
+}
       // If this was a selfDestruct paste, server should have deleted/marked it so subsequent view attempts return 410.
       // Update meta.viewCount if the server returns that; here we just keep meta for UI context.
     } catch (err: any) {
