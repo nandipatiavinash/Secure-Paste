@@ -1,8 +1,8 @@
 // server/routes.ts
 import type { Express } from "express";
 import { Request, Response, NextFunction } from "express";
+import { setupAuth, attachSupabaseUser } from "./auth";
 import { createServer, type Server } from "http";
-import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { malwareScanner } from "./services/malware-scanner";
 import { encryptionService } from "./services/encryption";
@@ -54,7 +54,12 @@ function getClientIP(req: Request): string {
 }
 
 export function registerRoutes(app: Express): Server {
+  // register supabase-related helper routes (login/register/post-confirm/etc)
   setupAuth(app);
+
+  // Attach supabase token -> req.user mapper for ALL requests
+  // This populates req.user when the client sends Authorization: Bearer <token>
+  app.use(attachSupabaseUser);
 
   app.set("trust proxy", true);
 
@@ -93,6 +98,7 @@ export function registerRoutes(app: Express): Server {
     })
   );
 
+  // <--- keep the rest of your existing route handlers here (do NOT add another registerRoutes) -->
   // view endpoint (client calls on mount)
   // view endpoint — client must call this to obtain content.
   // This enforces expiry, password for encrypted pastes, increments views,
