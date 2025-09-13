@@ -1,4 +1,4 @@
-// storage.ts
+// server/storage.ts
 import {
   users,
   pastes,
@@ -23,9 +23,9 @@ import { db } from "./db";
 import { eq, desc, and, or, lt, gt, sql } from "drizzle-orm";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
-import { pool } from "./db";
+import { pool } from "./db"; // use the pool exported from ./db (do NOT recreate)
+import type { Pool } from "pg";
 
-// Session store (connect-pg-simple)
 const PostgresSessionStore = connectPg(session);
 
 type ExpiryTime = "1h" | "1d" | "1w" | "1m" | "never";
@@ -180,19 +180,19 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-async getPasteAccessLogs(pasteId: string): Promise<AccessLog[]> {
-  return await db
-    .select({
-      id: accessLogs.id,
-      pasteId: accessLogs.pasteId,
-      viewerIp: accessLogs.viewerIp,      // 👈 force camelCase
-      userAgent: accessLogs.userAgent,
-      accessedAt: accessLogs.accessedAt,
-    })
-    .from(accessLogs)
-    .where(eq(accessLogs.pasteId, pasteId))
-    .orderBy(desc(accessLogs.accessedAt));
-}
+  async getPasteAccessLogs(pasteId: string): Promise<AccessLog[]> {
+    return await db
+      .select({
+        id: accessLogs.id,
+        pasteId: accessLogs.pasteId,
+        viewerIp: accessLogs.viewerIp,
+        userAgent: accessLogs.userAgent,
+        accessedAt: accessLogs.accessedAt,
+      })
+      .from(accessLogs)
+      .where(eq(accessLogs.pasteId, pasteId))
+      .orderBy(desc(accessLogs.accessedAt));
+  }
 
   // -------- Password Resets --------
   async createPasswordReset(insertReset: InsertPasswordReset): Promise<PasswordReset> {
@@ -269,6 +269,80 @@ async getPasteAccessLogs(pasteId: string): Promise<AccessLog[]> {
       .update(shareableLinks)
       .set({ usageCount: sql`${shareableLinks.usageCount} + 1` })
       .where(eq(shareableLinks.token, token));
+  }
+
+  // -------- New atomic consume & delete helpers --------
+  /**
+   * Atomically fetch a paste for viewing and update metadata:
+   *  - Locks paste row FOR UPDATE to avoid race conditions
+   *  - If paste is expired or already deleted -> returns null
+   *  - If selfDestruct -> increments view_count and sets deleted_at = now()
+   *  - Otherwise -> increments view_count, sets viewed_at = now()
+   *
+   * Returns the paste row (original values) or null if not available.
+   */
+  async consumePasteForView(id: string): Promise<Paste | null> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const sel = await client.query("SELECT * FROM pastes WHERE id=$1 FOR UPDATE", [id]);
+      if (sel.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const row = sel.rows[0];
+
+      // normalized row -> but return the raw row as Paste typed (caller may expect content)
+      // treat as deleted if deleted_at present
+      if (row.deleted_at) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      // expiry check: if expired, mark deleted and return null
+      if (row.expires_at && new Date() > new Date(row.expires_at)) {
+        await client.query("UPDATE pastes SET deleted_at = now() WHERE id=$1", [id]);
+        await client.query("COMMIT");
+        return null;
+      }
+
+      if (row.self_destruct) {
+        await client.query(
+          `UPDATE pastes
+           SET view_count = COALESCE(view_count,0) + 1,
+               deleted_at = now(),
+               viewed_at = now()
+           WHERE id = $1`,
+          [id]
+        );
+      } else {
+        await client.query(
+          `UPDATE pastes
+           SET view_count = COALESCE(view_count,0) + 1,
+               viewed_at = now()
+           WHERE id = $1`,
+          [id]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      // Convert DB row to Paste shape expected by rest of app.
+      // Drizzle's Paste type fields may be camelCase; to keep compatibility,
+      // we'll return the raw row cast as unknown then as Paste.
+      return row as unknown as Paste;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  // soft delete helper (non-transactional)
+  async markPasteDeleted(id: string): Promise<void> {
+    await pool.query("UPDATE pastes SET deleted_at = now() WHERE id = $1", [id]);
   }
 }
 
